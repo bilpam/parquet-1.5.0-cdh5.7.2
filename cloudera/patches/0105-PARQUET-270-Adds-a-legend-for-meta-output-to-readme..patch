@@ -1,0 +1,46 @@
+From 8ac08de545e50f3879d20990c2237da9bfd21633 Mon Sep 17 00:00:00 2001
+From: Brett Stime <brett.stime@nativex.com>
+Date: Wed, 29 Apr 2015 17:53:10 -0700
+Subject: [PATCH 105/176] PARQUET-270: Adds a legend for meta output to
+ readme.md
+
+Author: Brett Stime <brett.stime@nativex.com>
+
+Closes #178 from w3iBStime/patch-2 and squashes the following commits:
+
+c6c6898 [Brett Stime] Makes meta legend more descriptive
+6d32bc3 [Brett Stime] Update README.md
+b1e38aa [Brett Stime] Adds a legend for meta output to readme.md
+---
+ parquet-tools/README.md |   18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/parquet-tools/README.md b/parquet-tools/README.md
+index 984d329..6d617ef 100644
+--- a/parquet-tools/README.md
++++ b/parquet-tools/README.md
+@@ -70,3 +70,21 @@ where option is one of:
+ where <input> is the parquet file to print to stdout
+ ```
+ 
++## Meta Legend
++
++### Row Group Totals
++
++Acronym | Definition
++--------|-----------
++RC | Row Count
++TS | Total Byte Size
++
++### Row Group Column Details
++
++Acronym | Definition
++--------|-----------
++DO | Dictionary Page Offset
++FPO | First Data Page Offset
++SZ:{x}/{y}/{z} | Size in bytes. x = Compressed total, y = uncompressed total, z = y:x ratio
++VC | Value Count
++RLE | Run-Length Encoding
+-- 
+1.7.9.5
+

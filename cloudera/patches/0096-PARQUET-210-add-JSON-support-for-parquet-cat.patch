@@ -1,0 +1,422 @@
+From 8f6d4558c3ea3e032b12892f4e11792497cd5ee4 Mon Sep 17 00:00:00 2001
+From: Neville Li <neville@spotify.com>
+Date: Tue, 31 Mar 2015 16:34:47 -0700
+Subject: [PATCH 096/176] PARQUET-210: add JSON support for parquet-cat
+
+JSON output with this patch:
+```
+{"int_field":99,"long_field":1099,"float_field":2099.5,"double_field":5099.5,"boolean_field":true,"string_field":"str99","nested":{"numbers":[100,101,102,103,104],"name":"name99","dict":{"a":100,"b":200,"c":300}}}
+```
+
+Current output format:
+```
+int_field = 99
+long_field = 1099
+float_field = 2099.5
+double_field = 5099.5
+boolean_field = true
+string_field = str99
+nested:
+.numbers:
+..array = 100
+..array = 101
+..array = 102
+..array = 103
+..array = 104
+.name = name99
+.dict:
+..map:
+...key = a
+...value = 100
+..map:
+...key = b
+...value = 200
+..map:
+...key = c
+...value = 300
+```
+
+Author: Neville Li <neville@spotify.com>
+
+Closes #140 from nevillelyh/neville/PARQUET-210 and squashes the following commits:
+
+45fd629 [Neville Li] PARQUET-210: add JSON support for parquet-cat
+---
+ .../java/parquet/tools/command/CatCommand.java     |   23 ++++++++++-
+ .../java/parquet/tools/read/SimpleListRecord.java  |   30 ++++++++++++++
+ .../tools/read/SimpleListRecordConverter.java      |   34 ++++++++++++++++
+ .../java/parquet/tools/read/SimpleMapRecord.java   |   43 ++++++++++++++++++++
+ .../tools/read/SimpleMapRecordConverter.java       |   34 ++++++++++++++++
+ .../main/java/parquet/tools/read/SimpleRecord.java |   36 +++++++++++++---
+ .../parquet/tools/read/SimpleRecordConverter.java  |   31 +++++---------
+ 7 files changed, 204 insertions(+), 27 deletions(-)
+ create mode 100644 parquet-tools/src/main/java/parquet/tools/read/SimpleListRecord.java
+ create mode 100644 parquet-tools/src/main/java/parquet/tools/read/SimpleListRecordConverter.java
+ create mode 100644 parquet-tools/src/main/java/parquet/tools/read/SimpleMapRecord.java
+ create mode 100644 parquet-tools/src/main/java/parquet/tools/read/SimpleMapRecordConverter.java
+
+diff --git a/parquet-tools/src/main/java/parquet/tools/command/CatCommand.java b/parquet-tools/src/main/java/parquet/tools/command/CatCommand.java
+index f101937..06400e4 100644
+--- a/parquet-tools/src/main/java/parquet/tools/command/CatCommand.java
++++ b/parquet-tools/src/main/java/parquet/tools/command/CatCommand.java
+@@ -21,6 +21,9 @@ package parquet.tools.command;
+ import java.io.PrintWriter;
+ 
+ import org.apache.commons.cli.CommandLine;
++import org.apache.commons.cli.Option;
++import org.apache.commons.cli.OptionBuilder;
++import org.apache.commons.cli.Options;
+ import org.apache.hadoop.fs.Path;
+ 
+ import parquet.hadoop.ParquetReader;
+@@ -34,6 +37,15 @@ public class CatCommand extends ArgsOnlyCommand {
+     "where <input> is the parquet file to print to stdout"
+   };
+ 
++  public static final Options OPTIONS;
++  static {
++    OPTIONS = new Options();
++    Option help = OptionBuilder.withLongOpt("json")
++                               .withDescription("Show records in JSON format.")
++                               .create('j');
++    OPTIONS.addOption(help);
++  }
++
+   public CatCommand() {
+     super(1, 1);
+   }
+@@ -44,6 +56,11 @@ public class CatCommand extends ArgsOnlyCommand {
+   }
+ 
+   @Override
++  public Options getOptions() {
++    return OPTIONS;
++  }
++
++  @Override
+   public void execute(CommandLine options) throws Exception {
+     super.execute(options);
+ 
+@@ -55,7 +72,11 @@ public class CatCommand extends ArgsOnlyCommand {
+       PrintWriter writer = new PrintWriter(Main.out, true);
+       reader = new ParquetReader<SimpleRecord>(new Path(input), new SimpleReadSupport());
+       for (SimpleRecord value = reader.read(); value != null; value = reader.read()) {
+-        value.prettyPrint(writer);
++        if (options.hasOption('j')) {
++          value.prettyPrintJson(writer);
++        } else {
++          value.prettyPrint(writer);
++        }
+         writer.println();
+       }
+     } finally {
+diff --git a/parquet-tools/src/main/java/parquet/tools/read/SimpleListRecord.java b/parquet-tools/src/main/java/parquet/tools/read/SimpleListRecord.java
+new file mode 100644
+index 0000000..940cade
+--- /dev/null
++++ b/parquet-tools/src/main/java/parquet/tools/read/SimpleListRecord.java
+@@ -0,0 +1,30 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *   http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing,
++ * software distributed under the License is distributed on an
++ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++ * KIND, either express or implied.  See the License for the
++ * specific language governing permissions and limitations
++ * under the License.
++ */
++package parquet.tools.read;
++
++public class SimpleListRecord extends SimpleRecord {
++  @Override
++  protected Object toJsonObject() {
++    Object[] result = new Object[values.size()];
++    for (int i = 0; i < values.size(); i++) {
++      result[i] = toJsonValue(values.get(i).getValue());
++    }
++    return result;
++  }
++}
+diff --git a/parquet-tools/src/main/java/parquet/tools/read/SimpleListRecordConverter.java b/parquet-tools/src/main/java/parquet/tools/read/SimpleListRecordConverter.java
+new file mode 100644
+index 0000000..4d76586
+--- /dev/null
++++ b/parquet-tools/src/main/java/parquet/tools/read/SimpleListRecordConverter.java
+@@ -0,0 +1,34 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *   http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing,
++ * software distributed under the License is distributed on an
++ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++ * KIND, either express or implied.  See the License for the
++ * specific language governing permissions and limitations
++ * under the License.
++ */
++package parquet.tools.read;
++
++import parquet.schema.GroupType;
++
++public class SimpleListRecordConverter extends SimpleRecordConverter {
++
++  public SimpleListRecordConverter(GroupType schema, String name, SimpleRecordConverter parent) {
++    super(schema, name, parent);
++  }
++
++  @Override
++  public void start() {
++    record = new SimpleListRecord();
++  }
++
++}
+diff --git a/parquet-tools/src/main/java/parquet/tools/read/SimpleMapRecord.java b/parquet-tools/src/main/java/parquet/tools/read/SimpleMapRecord.java
+new file mode 100644
+index 0000000..00c1868
+--- /dev/null
++++ b/parquet-tools/src/main/java/parquet/tools/read/SimpleMapRecord.java
+@@ -0,0 +1,43 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *   http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing,
++ * software distributed under the License is distributed on an
++ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++ * KIND, either express or implied.  See the License for the
++ * specific language governing permissions and limitations
++ * under the License.
++ */
++package parquet.tools.read;
++
++import com.google.common.collect.Maps;
++
++import java.util.Map;
++
++public class SimpleMapRecord extends SimpleRecord {
++  @Override
++  protected Object toJsonObject() {
++    Map<String, Object> result = Maps.newLinkedHashMap();
++    for (NameValue value : values) {
++      String key = null;
++      Object val = null;
++      for (NameValue kv : ((SimpleRecord) value.getValue()).values) {
++        if (kv.getName().equals("key")) {
++          key = (String) kv.getValue();
++        } else if (kv.getName().equals("value")) {
++          val = toJsonValue(kv.getValue());
++        }
++      }
++      result.put(key, val);
++    }
++    return result;
++  }
++}
+diff --git a/parquet-tools/src/main/java/parquet/tools/read/SimpleMapRecordConverter.java b/parquet-tools/src/main/java/parquet/tools/read/SimpleMapRecordConverter.java
+new file mode 100644
+index 0000000..ad862cb
+--- /dev/null
++++ b/parquet-tools/src/main/java/parquet/tools/read/SimpleMapRecordConverter.java
+@@ -0,0 +1,34 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *   http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing,
++ * software distributed under the License is distributed on an
++ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++ * KIND, either express or implied.  See the License for the
++ * specific language governing permissions and limitations
++ * under the License.
++ */
++package parquet.tools.read;
++
++import parquet.schema.GroupType;
++
++public class SimpleMapRecordConverter extends SimpleRecordConverter {
++
++  public SimpleMapRecordConverter(GroupType schema, String name, SimpleRecordConverter parent) {
++    super(schema, name, parent);
++  }
++
++  @Override
++  public void start() {
++    record = new SimpleMapRecord();
++  }
++
++}
+diff --git a/parquet-tools/src/main/java/parquet/tools/read/SimpleRecord.java b/parquet-tools/src/main/java/parquet/tools/read/SimpleRecord.java
+index dd68096..fdd527c 100644
+--- a/parquet-tools/src/main/java/parquet/tools/read/SimpleRecord.java
++++ b/parquet-tools/src/main/java/parquet/tools/read/SimpleRecord.java
+@@ -18,17 +18,18 @@
+  */
+ package parquet.tools.read;
+ 
++import java.io.IOException;
+ import java.io.PrintWriter;
+-import java.util.ArrayList;
+-import java.util.Arrays;
+-import java.util.Collections;
+-import java.util.List;
++import java.util.*;
+ 
+ import com.google.common.base.Strings;
++import com.google.common.collect.Maps;
++import org.codehaus.jackson.map.ObjectMapper;
++import org.codehaus.jackson.node.BinaryNode;
+ 
+ public class SimpleRecord {
+   public static final int TAB_SIZE = 2;
+-  private final List<NameValue> values;
++  protected final List<NameValue> values;
+ 
+   public SimpleRecord() {
+     this.values = new ArrayList<NameValue>();
+@@ -65,7 +66,7 @@ public class SimpleRecord {
+         out.print("<null>");
+       } else if (byte[].class == val.getClass()) {
+         out.print(" = ");
+-        out.print(Arrays.toString((byte[])val));
++        out.print(new BinaryNode((byte[]) val).asText());
+       } else if (short[].class == val.getClass()) {
+         out.print(" = ");
+         out.print(Arrays.toString((short[])val));
+@@ -100,6 +101,29 @@ public class SimpleRecord {
+     }
+   }
+ 
++  public void prettyPrintJson(PrintWriter out) throws IOException {
++    ObjectMapper mapper = new ObjectMapper();
++    out.write(mapper.writeValueAsString(this.toJsonObject()));
++  }
++
++  protected Object toJsonObject() {
++    Map<String, Object> result = Maps.newLinkedHashMap();
++    for (NameValue value : values) {
++      result.put(value.getName(), toJsonValue(value.getValue()));
++    }
++    return result;
++  }
++
++  protected static Object toJsonValue(Object val) {
++    if (SimpleRecord.class.isAssignableFrom(val.getClass())) {
++      return ((SimpleRecord) val).toJsonObject();
++    } else if (byte[].class == val.getClass()) {
++      return new BinaryNode((byte[]) val);
++    } else {
++      return val;
++    }
++  }
++
+   public static final class NameValue {
+     private final String name;
+     private final Object value;
+diff --git a/parquet-tools/src/main/java/parquet/tools/read/SimpleRecordConverter.java b/parquet-tools/src/main/java/parquet/tools/read/SimpleRecordConverter.java
+index 13c39e4..2244a75 100644
+--- a/parquet-tools/src/main/java/parquet/tools/read/SimpleRecordConverter.java
++++ b/parquet-tools/src/main/java/parquet/tools/read/SimpleRecordConverter.java
+@@ -18,12 +18,10 @@
+  */
+ package parquet.tools.read;
+ 
+-import java.nio.ByteBuffer;
+ import java.nio.CharBuffer;
+ import java.nio.charset.Charset;
+ import java.nio.charset.CharsetDecoder;
+ 
+-import parquet.column.Dictionary;
+ import parquet.io.api.Binary;
+ import parquet.io.api.Converter;
+ import parquet.io.api.GroupConverter;
+@@ -44,7 +42,7 @@ public class SimpleRecordConverter extends GroupConverter {
+   private final Converter converters[];
+   private final String name;
+   private final SimpleRecordConverter parent;
+-  private SimpleRecord record;
++  protected SimpleRecord record;
+ 
+   public SimpleRecordConverter(GroupType schema) {
+     this(schema, null, null);
+@@ -62,8 +60,9 @@ public class SimpleRecordConverter extends GroupConverter {
+   }
+ 
+   private Converter createConverter(Type field) {
++    OriginalType otype = field.getOriginalType();
++
+     if (field.isPrimitive()) {
+-      OriginalType otype = field.getOriginalType();
+       if (otype != null) {
+         switch (otype) {
+           case MAP: break;
+@@ -77,7 +76,14 @@ public class SimpleRecordConverter extends GroupConverter {
+       return new SimplePrimitiveConverter(field.getName());
+     }
+ 
+-    return new SimpleRecordConverter(field.asGroupType(), field.getName(), this);
++    GroupType groupType = field.asGroupType();
++    if (otype != null) {
++      switch (otype) {
++        case MAP: return new SimpleMapRecordConverter(groupType, field.getName(), this);
++        case LIST: return new SimpleListRecordConverter(groupType, field.getName(), this);
++      }
++    }
++    return new SimpleRecordConverter(groupType, field.getName(), this);
+   }
+ 
+   @Override
+@@ -110,21 +116,6 @@ public class SimpleRecordConverter extends GroupConverter {
+ 
+     @Override
+     public void addBinary(Binary value) {
+-      byte[] data = value.getBytes();
+-      if (data == null) {
+-        record.add(name, null);
+-        return;
+-      }
+-
+-      if (data != null) {
+-        try {
+-          CharBuffer buffer = UTF8_DECODER.decode(value.toByteBuffer());
+-          record.add(name, buffer.toString());
+-          return;
+-        } catch (Throwable th) {
+-        }
+-      }
+-
+       record.add(name, value.getBytes());
+     }
+ 
+-- 
+1.7.9.5
+

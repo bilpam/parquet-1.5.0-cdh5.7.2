@@ -1,0 +1,137 @@
+From fad82390e6a5954c4093f41fb27c224b491d5e52 Mon Sep 17 00:00:00 2001
+From: Tianshuo Deng <tdeng@twitter.com>
+Date: Wed, 5 Aug 2015 16:29:00 -0700
+Subject: [PATCH 157/176] PARQUET-341 improve write performance for wide
+ schema sparse data
+
+In write path, when there are tons of sparse data, most of time is spent on writing nulls.
+Currently writing nulls has the same code path as writing values, which is reclusive traverse all the leaves when a group is null.
+Due to the fact that when a group is null all the leaves beneath it should be written with null value with the same repetition level and definition level, we can eliminate the recursion call to get the leaves
+
+This PR caches the leaves for each group node. So when a group node is null, their leaves can be flushed with null values directly.
+
+We tested it with a really wide schema on one of our production data. It improves the performance by ~20%
+
+Author: Tianshuo Deng <tdeng@twitter.com>
+
+Closes #247 from tsdeng/flush_null_directly and squashes the following commits:
+
+253f2e3 [Tianshuo Deng] address comments
+8676cd7 [Tianshuo Deng] flush null directly to leaves
+
+Conflicts:
+	parquet-hadoop/src/main/java/parquet/hadoop/InternalParquetRecordReader.java
+Resolution:
+    Updated getColumnIO call to remove strictTypeChecking call, not backported
+---
+ .../src/main/java/parquet/io/MessageColumnIO.java  |   39 +++++++++++++++++---
+ .../hadoop/InternalParquetRecordReader.java        |    3 +-
+ 2 files changed, 36 insertions(+), 6 deletions(-)
+
+diff --git a/parquet-column/src/main/java/parquet/io/MessageColumnIO.java b/parquet-column/src/main/java/parquet/io/MessageColumnIO.java
+index 4ed7a17..eb46740 100644
+--- a/parquet-column/src/main/java/parquet/io/MessageColumnIO.java
++++ b/parquet-column/src/main/java/parquet/io/MessageColumnIO.java
+@@ -18,9 +18,12 @@
+  */
+ package parquet.io;
+ 
++import java.util.ArrayList;
+ import java.util.Arrays;
+ import java.util.BitSet;
++import java.util.HashMap;
+ import java.util.List;
++import java.util.Map;
+ 
+ import parquet.Log;
+ import parquet.column.ColumnWriteStore;
+@@ -172,16 +175,39 @@ public class MessageColumnIO extends GroupColumnIO {
+     private final FieldsMarker[] fieldsWritten;
+     private final int[] r;
+     private final ColumnWriter[] columnWriter;
++    /** maintain a map of a group and all the leaf nodes underneath it. It's used to optimize writing null for a group node
++     * all the leaves can be called directly without traversing the sub tree of the group node */
++    private Map<GroupColumnIO, List<ColumnWriter>>  groupToLeafWriter = new HashMap<GroupColumnIO, List<ColumnWriter>>();
+     private final ColumnWriteStore columns;
+     private boolean emptyField = true;
+ 
++    private void buildGroupToLeafWriterMap(PrimitiveColumnIO primitive, ColumnWriter writer) {
++      GroupColumnIO  parent = primitive.getParent();
++      do {
++        getLeafWriters(parent).add(writer);
++        parent = parent.getParent();
++      } while (parent != null);
++    }
++
++    private List<ColumnWriter> getLeafWriters(GroupColumnIO group) {
++      List<ColumnWriter> writers = groupToLeafWriter.get(group);
++      if (writers == null) {
++        writers = new ArrayList<ColumnWriter>();
++        groupToLeafWriter.put(group, writers);
++      }
++      return writers;
++    }
++
+     public MessageColumnIORecordConsumer(ColumnWriteStore columns) {
+       this.columns = columns;
+       int maxDepth = 0;
+       this.columnWriter = new ColumnWriter[MessageColumnIO.this.getLeaves().size()];
++
+       for (PrimitiveColumnIO primitiveColumnIO : MessageColumnIO.this.getLeaves()) {
++        ColumnWriter w = columns.getColumnWriter(primitiveColumnIO.getColumnDescriptor());
+         maxDepth = Math.max(maxDepth, primitiveColumnIO.getFieldPath().length);
+-        columnWriter[primitiveColumnIO.getId()] = columns.getColumnWriter(primitiveColumnIO.getColumnDescriptor());
++        columnWriter[primitiveColumnIO.getId()] = w;
++        buildGroupToLeafWriterMap(primitiveColumnIO, w);
+       }
+ 
+       fieldsWritten = new FieldsMarker[maxDepth];
+@@ -271,10 +297,13 @@ public class MessageColumnIO extends GroupColumnIO {
+         columnWriter[((PrimitiveColumnIO)undefinedField).getId()].writeNull(r, d);
+       } else {
+         GroupColumnIO groupColumnIO = (GroupColumnIO)undefinedField;
+-        int childrenCount = groupColumnIO.getChildrenCount();
+-        for (int i = 0; i < childrenCount; i++) {
+-          writeNull(groupColumnIO.getChild(i), r, d);
+-        }
++        writeNullToLeaves(groupColumnIO, r, d);
++      }
++    }
++
++    private void writeNullToLeaves(GroupColumnIO group, int r, int d) {
++      for(ColumnWriter leafWriter: groupToLeafWriter.get(group)) {
++        leafWriter.writeNull(r,d);
+       }
+     }
+ 
+diff --git a/parquet-hadoop/src/main/java/parquet/hadoop/InternalParquetRecordReader.java b/parquet-hadoop/src/main/java/parquet/hadoop/InternalParquetRecordReader.java
+index b759d1f..6d24b9c 100644
+--- a/parquet-hadoop/src/main/java/parquet/hadoop/InternalParquetRecordReader.java
++++ b/parquet-hadoop/src/main/java/parquet/hadoop/InternalParquetRecordReader.java
+@@ -61,6 +61,7 @@ class InternalParquetRecordReader<T> {
+ 
+   private MessageType requestedSchema;
+   private MessageType fileSchema;
++  private MessageColumnIO columnIO;
+   private int columnCount;
+   private final ReadSupport<T> readSupport;
+ 
+@@ -134,7 +135,6 @@ class InternalParquetRecordReader<T> {
+       BenchmarkCounter.incrementTime(timeSpentReading);
+       if (Log.INFO) LOG.info("block read in memory in " + timeSpentReading + " ms. row count = " + pages.getRowCount());
+       if (Log.DEBUG) LOG.debug("initializing Record assembly with requested schema " + requestedSchema);
+-      MessageColumnIO columnIO = columnIOFactory.getColumnIO(requestedSchema, fileSchema);
+       recordReader = columnIO.getRecordReader(pages, recordConverter, filter);
+       startedAssemblingCurrentBlockAt = System.currentTimeMillis();
+       totalCountLoadedSoFar += pages.getRowCount();
+@@ -172,6 +172,7 @@ class InternalParquetRecordReader<T> {
+     this.columnIOFactory = new ColumnIOFactory(parquetFileMetadata.getCreatedBy());
+     this.requestedSchema = readContext.getRequestedSchema();
+     this.fileSchema = fileSchema;
++    this.columnIO = columnIOFactory.getColumnIO(requestedSchema, fileSchema);
+     this.file = file;
+     this.columnCount = requestedSchema.getPaths().size();
+     this.recordConverter = readSupport.prepareForRead(
+-- 
+1.7.9.5
+

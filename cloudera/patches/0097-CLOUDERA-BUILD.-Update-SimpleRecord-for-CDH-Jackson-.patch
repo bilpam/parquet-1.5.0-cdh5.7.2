@@ -1,0 +1,26 @@
+From c86f1aa6bc91b20c56d5cbdf1be3a47df0a4b623 Mon Sep 17 00:00:00 2001
+From: Ryan Blue <blue@apache.org>
+Date: Wed, 12 Aug 2015 12:58:19 -0700
+Subject: [PATCH 097/176] CLOUDERA-BUILD. Update SimpleRecord for CDH Jackson
+ version.
+
+---
+ .../main/java/parquet/tools/read/SimpleRecord.java |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/parquet-tools/src/main/java/parquet/tools/read/SimpleRecord.java b/parquet-tools/src/main/java/parquet/tools/read/SimpleRecord.java
+index fdd527c..e4b3524 100644
+--- a/parquet-tools/src/main/java/parquet/tools/read/SimpleRecord.java
++++ b/parquet-tools/src/main/java/parquet/tools/read/SimpleRecord.java
+@@ -66,7 +66,7 @@ public class SimpleRecord {
+         out.print("<null>");
+       } else if (byte[].class == val.getClass()) {
+         out.print(" = ");
+-        out.print(new BinaryNode((byte[]) val).asText());
++        out.print(new BinaryNode((byte[]) val).getValueAsText());
+       } else if (short[].class == val.getClass()) {
+         out.print(" = ");
+         out.print(Arrays.toString((short[])val));
+-- 
+1.7.9.5
+

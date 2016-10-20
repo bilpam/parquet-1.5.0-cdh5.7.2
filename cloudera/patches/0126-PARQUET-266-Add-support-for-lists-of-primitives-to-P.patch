@@ -1,0 +1,109 @@
+From 43b553dd6027893849bb9f1c0b083417c5394fc3 Mon Sep 17 00:00:00 2001
+From: Christian Rolf <christian.rolf@adello.com>
+Date: Fri, 5 Jun 2015 10:32:54 -0700
+Subject: [PATCH 126/176] PARQUET-266: Add support for lists of primitives to
+ Pig schema converter
+
+Author: Christian Rolf <christian.rolf@adello.com>
+
+Closes #209 from ccrolf/PigPrimitivesList and squashes the following commits:
+
+5a69273 [Christian Rolf] Add support for lists of primitives to Pig schema converter
+
+Conflicts:
+	parquet-pig/src/test/java/parquet/pig/TestPigSchemaConverter.java
+Resolution:
+    Fixed package names.
+---
+ .../main/java/parquet/pig/PigSchemaConverter.java  |    9 ++++--
+ .../java/parquet/pig/TestPigSchemaConverter.java   |   33 ++++++++++++++++++++
+ 2 files changed, 40 insertions(+), 2 deletions(-)
+
+diff --git a/parquet-pig/src/main/java/parquet/pig/PigSchemaConverter.java b/parquet-pig/src/main/java/parquet/pig/PigSchemaConverter.java
+index 13cb13b..b440047 100644
+--- a/parquet-pig/src/main/java/parquet/pig/PigSchemaConverter.java
++++ b/parquet-pig/src/main/java/parquet/pig/PigSchemaConverter.java
+@@ -61,6 +61,7 @@ import parquet.schema.Type.Repetition;
+  */
+ public class PigSchemaConverter {
+   private static final Log LOG = Log.getLog(PigSchemaConverter.class);
++  static final String ARRAY_VALUE_NAME = "value";
+   private ColumnAccess columnAccess;
+ 
+   public PigSchemaConverter() {
+@@ -288,8 +289,12 @@ public class PigSchemaConverter {
+         s.getField(0).alias = null;
+         return new FieldSchema(fieldName, s, DataType.MAP);
+       case LIST:
+-        if (parquetGroupType.getFieldCount()!= 1 || parquetGroupType.getType(0).isPrimitive()) {
+-          throw new SchemaConversionException("Invalid list type " + parquetGroupType );
++        Type type = parquetGroupType.getType(0);
++        if (parquetGroupType.getFieldCount()!= 1 || type.isPrimitive()) {
++          // an array is effectively a bag
++          Schema primitiveSchema = new Schema(getSimpleFieldSchema(parquetGroupType.getFieldName(0), type));
++          Schema tupleSchema = new Schema(new FieldSchema(ARRAY_VALUE_NAME, primitiveSchema, DataType.TUPLE));
++          return new FieldSchema(fieldName, tupleSchema, DataType.BAG);
+         }
+         GroupType tupleType = parquetGroupType.getType(0).asGroupType();
+         if (!tupleType.isRepetition(Repetition.REPEATED)) {
+diff --git a/parquet-pig/src/test/java/parquet/pig/TestPigSchemaConverter.java b/parquet-pig/src/test/java/parquet/pig/TestPigSchemaConverter.java
+index 66cbb1e..94d6258 100644
+--- a/parquet-pig/src/test/java/parquet/pig/TestPigSchemaConverter.java
++++ b/parquet-pig/src/test/java/parquet/pig/TestPigSchemaConverter.java
+@@ -35,6 +35,11 @@ import java.util.Set;
+ import parquet.schema.PrimitiveType;
+ import parquet.schema.PrimitiveType.PrimitiveTypeName;
+ import parquet.schema.Type;
++import parquet.schema.GroupType;
++import parquet.schema.OriginalType;
++import parquet.schema.PrimitiveType;
++import parquet.schema.Type;
++import parquet.schema.Types;
+ import org.apache.pig.impl.logicalLayer.schema.Schema;
+ import org.apache.pig.impl.util.Utils;
+ import org.junit.Ignore;
+@@ -80,6 +85,23 @@ public class TestPigSchemaConverter {
+     testPigConversion("a:map[{bag: (a:int)}]");
+   }
+ 
++  @Test
++  public void testListsOfPrimitive() throws Exception {
++    for (Type.Repetition repetition : Type.Repetition.values()) {
++      for (Type.Repetition valueRepetition : Type.Repetition.values()) {
++        for (PrimitiveType.PrimitiveTypeName primitiveTypeName : PrimitiveType.PrimitiveTypeName.values()) {
++          if (primitiveTypeName != PrimitiveType.PrimitiveTypeName.INT96) { // INT96 is NYI
++            Types.PrimitiveBuilder<PrimitiveType> value = Types.primitive(primitiveTypeName, valueRepetition);
++            if (primitiveTypeName == PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY)
++              value.length(1);
++            GroupType type = Types.buildGroup(repetition).addField(value.named("b")).as(OriginalType.LIST).named("a");
++            pigSchemaConverter.convertField(type); // no exceptions, please
++          }
++        }
++      }
++    }
++  }
++
+   private void testConversion(String pigSchemaString, String schemaString) throws Exception {
+     Schema pigSchema = Utils.getSchemaFromString(pigSchemaString);
+     MessageType schema = pigSchemaConverter.convert(pigSchema);
+@@ -185,6 +207,17 @@ public class TestPigSchemaConverter {
+         "  }\n" +
+         "}\n");
+   }
++
++  @Test
++  public void testListOfPrimitiveIsABag() throws Exception {
++    testFixedConversion(
++        "message pig_schema {\n" +
++        "  optional group a (LIST) {\n" +
++        "    repeated binary b (UTF8);\n" +
++        "  }\n" +
++        "}\n",
++        "a:{" + PigSchemaConverter.ARRAY_VALUE_NAME + ":(b: chararray)}");
++  }
+   
+   private void testFixedConversion(String schemaString, String pigSchemaString)
+       throws Exception {
+-- 
+1.7.9.5
+

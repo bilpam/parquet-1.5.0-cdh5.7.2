@@ -1,0 +1,3520 @@
+From 0b3f32cbb90886055eac417a015c8ed32c856799 Mon Sep 17 00:00:00 2001
+From: Ryan Blue <blue@apache.org>
+Date: Mon, 18 May 2015 10:08:32 -0700
+Subject: [PATCH 118/176] PARQUET-243: Add Avro reflect support
+
+Author: Ryan Blue <blue@apache.org>
+
+Closes #165 from rdblue/PARQUET-243-add-avro-reflect and squashes the following commits:
+
+a1a17b4 [Ryan Blue] PARQUET-243: Update for Tom's review comments.
+16584d1 [Ryan Blue] PARQUET-243: Fix AvroWriteSupport bug.
+fa4a9ec [Ryan Blue] PARQUET-243: Add reflect tests.
+4c50cd1 [Ryan Blue] PARQUET-243: Update write support for reflected objects.
+b50c482 [Ryan Blue] PARQUET-243: Update tests to run with new converters.
+0b7a333 [Ryan Blue] PARQUET-243: Use common AvroConverters where possible.
+2f6825d [Ryan Blue] PARQUET-243: Add reflect converters that behave more like Avro.
+98f10df [Ryan Blue] PARQUET-243: Add Avro compatible record materializer.
+
+Conflicts:
+	parquet-avro/src/main/java/parquet/avro/AvroIndexedRecordConverter.java
+	parquet-avro/src/main/java/parquet/avro/AvroParquetWriter.java
+	parquet-avro/src/main/java/parquet/avro/AvroRecordMaterializer.java
+	parquet-avro/src/main/java/parquet/avro/AvroWriteSupport.java
+	parquet-avro/src/test/java/parquet/avro/TestReadWrite.java
+	parquet-avro/src/test/java/parquet/avro/TestSpecificReadWrite.java
+	pom.xml
+Resolution:
+    Fixed imports and fastutil version addition to the pom.
+    Fixed TestReflectReadWrite source files (not in org/apache/)
+---
+ parquet-avro/pom.xml                               |    5 +
+ .../parquet/avro/AvroCompatRecordMaterializer.java |   46 ++
+ .../src/main/java/parquet/avro/AvroConverters.java |  253 ++++++
+ .../parquet/avro/AvroIndexedRecordConverter.java   |  227 +-----
+ .../java/parquet/avro/AvroParquetOutputFormat.java |   17 +-
+ .../main/java/parquet/avro/AvroParquetReader.java  |    5 +-
+ .../main/java/parquet/avro/AvroParquetWriter.java  |  141 +++-
+ .../main/java/parquet/avro/AvroReadSupport.java    |   54 +-
+ .../java/parquet/avro/AvroRecordConverter.java     |  827 ++++++++++++++++++++
+ .../java/parquet/avro/AvroRecordMaterializer.java  |    7 +-
+ .../main/java/parquet/avro/AvroWriteSupport.java   |  236 +++++-
+ .../java/parquet/avro/GenericDataSupplier.java     |   28 +
+ .../java/parquet/avro/ParentValueContainer.java    |   63 ++
+ .../java/parquet/avro/ReflectDataSupplier.java     |   29 +
+ .../parquet/avro/TestBackwardCompatibility.java    |   18 +-
+ .../src/test/java/parquet/avro/TestReadWrite.java  |   41 +-
+ .../parquet/avro/TestReflectInputOutputFormat.java |  492 ++++++++++++
+ .../java/parquet/avro/TestReflectReadWrite.java    |  217 +++++
+ .../java/parquet/avro/TestSpecificReadWrite.java   |   45 +-
+ parquet-column/pom.xml                             |    2 +-
+ pom.xml                                            |    1 +
+ 21 files changed, 2481 insertions(+), 273 deletions(-)
+ create mode 100644 parquet-avro/src/main/java/parquet/avro/AvroCompatRecordMaterializer.java
+ create mode 100644 parquet-avro/src/main/java/parquet/avro/AvroConverters.java
+ create mode 100644 parquet-avro/src/main/java/parquet/avro/AvroRecordConverter.java
+ create mode 100644 parquet-avro/src/main/java/parquet/avro/GenericDataSupplier.java
+ create mode 100644 parquet-avro/src/main/java/parquet/avro/ParentValueContainer.java
+ create mode 100644 parquet-avro/src/main/java/parquet/avro/ReflectDataSupplier.java
+ create mode 100644 parquet-avro/src/test/java/parquet/avro/TestReflectInputOutputFormat.java
+ create mode 100644 parquet-avro/src/test/java/parquet/avro/TestReflectReadWrite.java
+
+diff --git a/parquet-avro/pom.xml b/parquet-avro/pom.xml
+index de93aeb..cc85a3f 100644
+--- a/parquet-avro/pom.xml
++++ b/parquet-avro/pom.xml
+@@ -57,6 +57,11 @@
+       <version>${avro.version}</version>
+     </dependency>
+     <dependency>
++      <groupId>it.unimi.dsi</groupId>
++      <artifactId>fastutil</artifactId>
++      <version>${fastutil.version}</version>
++    </dependency>
++    <dependency>
+       <groupId>org.apache.hadoop</groupId>
+       <artifactId>hadoop-client</artifactId>
+       <version>${hadoop.version}</version>
+diff --git a/parquet-avro/src/main/java/parquet/avro/AvroCompatRecordMaterializer.java b/parquet-avro/src/main/java/parquet/avro/AvroCompatRecordMaterializer.java
+new file mode 100644
+index 0000000..90e1255
+--- /dev/null
++++ b/parquet-avro/src/main/java/parquet/avro/AvroCompatRecordMaterializer.java
+@@ -0,0 +1,46 @@
++/* 
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ * 
++ *   http://www.apache.org/licenses/LICENSE-2.0
++ * 
++ * Unless required by applicable law or agreed to in writing,
++ * software distributed under the License is distributed on an
++ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++ * KIND, either express or implied.  See the License for the
++ * specific language governing permissions and limitations
++ * under the License.
++ */
++package parquet.avro;
++
++import org.apache.avro.Schema;
++import org.apache.avro.generic.GenericData;
++import org.apache.avro.generic.IndexedRecord;
++import parquet.io.api.GroupConverter;
++import parquet.io.api.RecordMaterializer;
++import parquet.schema.MessageType;
++
++class AvroCompatRecordMaterializer<T extends IndexedRecord> extends RecordMaterializer<T> {
++
++  private AvroIndexedRecordConverter<T> root;
++
++  public AvroCompatRecordMaterializer(MessageType requestedSchema, Schema avroSchema,
++                                      GenericData baseModel) {
++    this.root = new AvroIndexedRecordConverter<T>(requestedSchema, avroSchema, baseModel);
++  }
++
++  @Override
++  public T getCurrentRecord() {
++    return root.getCurrentRecord();
++  }
++
++  @Override
++  public GroupConverter getRootConverter() {
++    return root;
++  }
++}
+diff --git a/parquet-avro/src/main/java/parquet/avro/AvroConverters.java b/parquet-avro/src/main/java/parquet/avro/AvroConverters.java
+new file mode 100644
+index 0000000..5c8182d
+--- /dev/null
++++ b/parquet-avro/src/main/java/parquet/avro/AvroConverters.java
+@@ -0,0 +1,253 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *   http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing,
++ * software distributed under the License is distributed on an
++ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++ * KIND, either express or implied.  See the License for the
++ * specific language governing permissions and limitations
++ * under the License.
++ */
++package parquet.avro;
++
++import java.nio.ByteBuffer;
++import org.apache.avro.Schema;
++import org.apache.avro.generic.GenericData;
++import parquet.column.Dictionary;
++import parquet.io.api.Binary;
++import parquet.io.api.GroupConverter;
++import parquet.io.api.PrimitiveConverter;
++
++public class AvroConverters {
++
++  public abstract static class AvroGroupConverter extends GroupConverter {
++    protected final ParentValueContainer parent;
++
++    public AvroGroupConverter(ParentValueContainer parent) {
++      this.parent = parent;
++    }
++  }
++
++  static class AvroPrimitiveConverter extends PrimitiveConverter {
++    protected final ParentValueContainer parent;
++
++    public AvroPrimitiveConverter(ParentValueContainer parent) {
++      this.parent = parent;
++    }
++  }
++
++  static final class FieldByteConverter extends AvroPrimitiveConverter {
++    public FieldByteConverter(ParentValueContainer parent) {
++      super(parent);
++    }
++
++    @Override
++    public void addInt(int value) {
++      parent.addByte((byte) value);
++    }
++  }
++  static final class FieldShortConverter extends AvroPrimitiveConverter {
++    public FieldShortConverter(ParentValueContainer parent) {
++      super(parent);
++    }
++
++    @Override
++    public void addInt(int value) {
++      parent.addShort((short) value);
++    }
++  }
++
++  static final class FieldCharConverter extends AvroPrimitiveConverter {
++    public FieldCharConverter(ParentValueContainer parent) {
++      super(parent);
++    }
++
++    @Override
++    public void addInt(int value) {
++      parent.addChar((char) value);
++    }
++  }
++
++  static final class FieldBooleanConverter extends AvroPrimitiveConverter {
++    public FieldBooleanConverter(ParentValueContainer parent) {
++      super(parent);
++    }
++
++    @Override
++    final public void addBoolean(boolean value) {
++      parent.addBoolean(value);
++    }
++  }
++
++  static final class FieldIntegerConverter extends AvroPrimitiveConverter {
++    public FieldIntegerConverter(ParentValueContainer parent) {
++      super(parent);
++    }
++
++    @Override
++    final public void addInt(int value) {
++      parent.addInt(value);
++    }
++  }
++
++  static final class FieldLongConverter extends AvroPrimitiveConverter {
++    public FieldLongConverter(ParentValueContainer parent) {
++      super(parent);
++    }
++
++    @Override
++    final public void addInt(int value) {
++      parent.addLong((long) value);
++    }
++
++    @Override
++    final public void addLong(long value) {
++      parent.addLong(value);
++    }
++  }
++
++  static final class FieldFloatConverter extends AvroPrimitiveConverter {
++    public FieldFloatConverter(ParentValueContainer parent) {
++      super(parent);
++    }
++
++    @Override
++    final public void addInt(int value) {
++      parent.addFloat((float) value);
++    }
++
++    @Override
++    final public void addLong(long value) {
++      parent.addFloat((float) value);
++    }
++
++    @Override
++    final public void addFloat(float value) {
++      parent.addFloat(value);
++    }
++
++  }
++
++  static final class FieldDoubleConverter extends AvroPrimitiveConverter {
++    public FieldDoubleConverter(ParentValueContainer parent) {
++      super(parent);
++    }
++
++    @Override
++    final public void addInt(int value) {
++      parent.addDouble((double) value);
++    }
++
++    @Override
++    final public void addLong(long value) {
++      parent.addDouble((double) value);
++    }
++
++    @Override
++    final public void addFloat(float value) {
++      parent.addDouble((double) value);
++    }
++
++    @Override
++    final public void addDouble(double value) {
++      parent.addDouble(value);
++    }
++  }
++
++  static final class FieldByteArrayConverter extends AvroPrimitiveConverter {
++    public FieldByteArrayConverter(ParentValueContainer parent) {
++      super(parent);
++    }
++
++    @Override
++    final public void addBinary(Binary value) {
++      parent.add(value.getBytes());
++    }
++  }
++
++  static final class FieldByteBufferConverter extends AvroPrimitiveConverter {
++    public FieldByteBufferConverter(ParentValueContainer parent) {
++      super(parent);
++    }
++
++    @Override
++    final public void addBinary(Binary value) {
++      parent.add(ByteBuffer.wrap(value.getBytes()));
++    }
++  }
++
++  static final class FieldStringConverter extends AvroPrimitiveConverter {
++    // TODO: dictionary support should be generic and provided by a parent
++    // TODO: this always produces strings, but should respect avro.java.string
++    private String[] dict;
++
++    public FieldStringConverter(ParentValueContainer parent) {
++      super(parent);
++    }
++
++    @Override
++    final public void addBinary(Binary value) {
++      parent.add(value.toStringUsingUTF8());
++    }
++
++    @Override
++    public boolean hasDictionarySupport() {
++      return true;
++    }
++
++    @Override
++    public void setDictionary(Dictionary dictionary) {
++      dict = new String[dictionary.getMaxId() + 1];
++      for (int i = 0; i <= dictionary.getMaxId(); i++) {
++        dict[i] = dictionary.decodeToBinary(i).toStringUsingUTF8();
++      }
++    }
++
++    @Override
++    public void addValueFromDictionary(int dictionaryId) {
++      parent.add(dict[dictionaryId]);
++    }
++  }
++
++  static final class FieldEnumConverter extends AvroPrimitiveConverter {
++    private final Schema schema;
++    private final GenericData model;
++
++    public FieldEnumConverter(ParentValueContainer parent, Schema enumSchema,
++                              GenericData model) {
++      super(parent);
++      this.schema = enumSchema;
++      this.model = model;
++    }
++
++    @Override
++    final public void addBinary(Binary value) {
++      parent.add(model.createEnum(value.toStringUsingUTF8(), schema));
++    }
++  }
++
++  static final class FieldFixedConverter extends AvroPrimitiveConverter {
++    private final Schema schema;
++    private final GenericData model;
++
++    public FieldFixedConverter(ParentValueContainer parent, Schema avroSchema,
++                               GenericData model) {
++      super(parent);
++      this.schema = avroSchema;
++      this.model = model;
++    }
++
++    @Override
++    final public void addBinary(Binary value) {
++      parent.add(model.createFixed(null /* reuse */, value.getBytes(), schema));
++    }
++  }
++}
+diff --git a/parquet-avro/src/main/java/parquet/avro/AvroIndexedRecordConverter.java b/parquet-avro/src/main/java/parquet/avro/AvroIndexedRecordConverter.java
+index 4ab3ba7..d6aee0e 100644
+--- a/parquet-avro/src/main/java/parquet/avro/AvroIndexedRecordConverter.java
++++ b/parquet-avro/src/main/java/parquet/avro/AvroIndexedRecordConverter.java
+@@ -19,7 +19,6 @@
+ package parquet.avro;
+ 
+ import java.lang.reflect.Constructor;
+-import java.nio.ByteBuffer;
+ import java.util.HashMap;
+ import java.util.HashSet;
+ import java.util.Map;
+@@ -41,6 +40,13 @@ import parquet.schema.MessageType;
+ import parquet.schema.OriginalType;
+ import parquet.schema.Type;
+ 
++/**
++ * This {@link Converter} class materializes records as Avro
++ * {@link IndexedRecord} instances. This is replaced by
++ * {@link AvroRecordConverter}, but is included for backward-compatibility.
++ *
++ * @param <T> a subclass of Avro's IndexedRecord
++ */
+ class AvroIndexedRecordConverter<T extends IndexedRecord> extends GroupConverter {
+ 
+   private final ParentValueContainer parent;
+@@ -73,8 +79,7 @@ class AvroIndexedRecordConverter<T extends IndexedRecord> extends GroupConverter
+     this.avroSchema = avroSchema;
+     int schemaSize = parquetSchema.getFieldCount();
+     this.converters = new Converter[schemaSize];
+-    this.specificClass = baseModel instanceof SpecificData ?
+-        ((SpecificData) baseModel).getClass(avroSchema) : null;
++    this.specificClass = getDatumClass(baseModel, avroSchema);
+ 
+     this.model = this.specificClass == null ? GenericData.get() : baseModel;
+ 
+@@ -90,7 +95,7 @@ class AvroIndexedRecordConverter<T extends IndexedRecord> extends GroupConverter
+       final int finalAvroIndex = avroFieldIndexes.remove(avroField.name());
+       converters[parquetFieldIndex++] = newConverter(nonNullSchema, parquetField, model, new ParentValueContainer() {
+         @Override
+-        void add(Object value) {
++        public void add(Object value) {
+           AvroIndexedRecordConverter.this.set(finalAvroIndex, value);
+         }
+       });
+@@ -108,6 +113,14 @@ class AvroIndexedRecordConverter<T extends IndexedRecord> extends GroupConverter
+     }
+   }
+ 
++  @SuppressWarnings("unchecked")
++  private static <T> Class<T> getDatumClass(GenericData model, Schema schema) {
++    if (model instanceof SpecificData) {
++      return (Class<T>) ((SpecificData) model).getClass(schema);
++    }
++    return null;
++  }
++
+   private Schema.Field getAvroField(String parquetFieldName) {
+     Schema.Field avroField = avroSchema.getField(parquetFieldName);
+     for (Schema.Field f : avroSchema.getFields()) {
+@@ -125,19 +138,19 @@ class AvroIndexedRecordConverter<T extends IndexedRecord> extends GroupConverter
+   private static Converter newConverter(Schema schema, Type type,
+       GenericData model, ParentValueContainer parent) {
+     if (schema.getType().equals(Schema.Type.BOOLEAN)) {
+-      return new FieldBooleanConverter(parent);
++      return new AvroConverters.FieldBooleanConverter(parent);
+     } else if (schema.getType().equals(Schema.Type.INT)) {
+-      return new FieldIntegerConverter(parent);
++      return new AvroConverters.FieldIntegerConverter(parent);
+     } else if (schema.getType().equals(Schema.Type.LONG)) {
+-      return new FieldLongConverter(parent);
++      return new AvroConverters.FieldLongConverter(parent);
+     } else if (schema.getType().equals(Schema.Type.FLOAT)) {
+-      return new FieldFloatConverter(parent);
++      return new AvroConverters.FieldFloatConverter(parent);
+     } else if (schema.getType().equals(Schema.Type.DOUBLE)) {
+-      return new FieldDoubleConverter(parent);
++      return new AvroConverters.FieldDoubleConverter(parent);
+     } else if (schema.getType().equals(Schema.Type.BYTES)) {
+-      return new FieldBytesConverter(parent);
++      return new AvroConverters.FieldByteBufferConverter(parent);
+     } else if (schema.getType().equals(Schema.Type.STRING)) {
+-      return new FieldStringConverter(parent, type.getOriginalType() == OriginalType.UTF8);
++      return new AvroConverters.FieldStringConverter(parent);
+     } else if (schema.getType().equals(Schema.Type.RECORD)) {
+       return new AvroIndexedRecordConverter(parent, type.asGroupType(), schema, model);
+     } else if (schema.getType().equals(Schema.Type.ENUM)) {
+@@ -165,11 +178,12 @@ class AvroIndexedRecordConverter<T extends IndexedRecord> extends GroupConverter
+   }
+ 
+   @Override
++  @SuppressWarnings("unchecked")
+   public void start() {
+     // Should do the right thing whether it is generic or specific
+     this.currentRecord = (T) ((this.specificClass == null) ?
+             new GenericData.Record(avroSchema) :
+-            ((SpecificData) model).newInstance(specificClass, avroSchema));
++            SpecificData.newInstance(specificClass, avroSchema));
+   }
+ 
+   @Override
+@@ -206,170 +220,6 @@ class AvroIndexedRecordConverter<T extends IndexedRecord> extends GroupConverter
+     return currentRecord;
+   }
+ 
+-  static abstract class ParentValueContainer {
+-
+-    /**
+-     * Adds the value to the parent.
+-     */
+-    abstract void add(Object value);
+-
+-  }
+-
+-  static final class FieldBooleanConverter extends PrimitiveConverter {
+-
+-    private final ParentValueContainer parent;
+-
+-    public FieldBooleanConverter(ParentValueContainer parent) {
+-      this.parent = parent;
+-    }
+-
+-    @Override
+-    final public void addBoolean(boolean value) {
+-      parent.add(value);
+-    }
+-
+-  }
+-
+-  static final class FieldIntegerConverter extends PrimitiveConverter {
+-
+-    private final ParentValueContainer parent;
+-
+-    public FieldIntegerConverter(ParentValueContainer parent) {
+-      this.parent = parent;
+-    }
+-
+-    @Override
+-    final public void addInt(int value) {
+-      parent.add(value);
+-    }
+-
+-  }
+-
+-  static final class FieldLongConverter extends PrimitiveConverter {
+-
+-    private final ParentValueContainer parent;
+-
+-    public FieldLongConverter(ParentValueContainer parent) {
+-      this.parent = parent;
+-    }
+-
+-    @Override
+-    final public void addInt(int value) {
+-      parent.add(Long.valueOf(value));
+-    }
+-
+-    @Override
+-    final public void addLong(long value) {
+-      parent.add(value);
+-    }
+-
+-  }
+-
+-  static final class FieldFloatConverter extends PrimitiveConverter {
+-
+-    private final ParentValueContainer parent;
+-
+-    public FieldFloatConverter(ParentValueContainer parent) {
+-      this.parent = parent;
+-    }
+-
+-    @Override
+-    final public void addInt(int value) {
+-      parent.add(Float.valueOf(value));
+-    }
+-
+-    @Override
+-    final public void addLong(long value) {
+-      parent.add(Float.valueOf(value));
+-    }
+-
+-    @Override
+-    final public void addFloat(float value) {
+-      parent.add(value);
+-    }
+-
+-  }
+-
+-  static final class FieldDoubleConverter extends PrimitiveConverter {
+-
+-    private final ParentValueContainer parent;
+-
+-    public FieldDoubleConverter(ParentValueContainer parent) {
+-      this.parent = parent;
+-    }
+-
+-    @Override
+-    final public void addInt(int value) {
+-      parent.add(Double.valueOf(value));
+-    }
+-
+-    @Override
+-    final public void addLong(long value) {
+-      parent.add(Double.valueOf(value));
+-    }
+-
+-    @Override
+-    final public void addFloat(float value) {
+-      parent.add(Double.valueOf(value));
+-    }
+-
+-    @Override
+-    final public void addDouble(double value) {
+-      parent.add(value);
+-    }
+-
+-  }
+-
+-  static final class FieldBytesConverter extends PrimitiveConverter {
+-
+-    private final ParentValueContainer parent;
+-
+-    public FieldBytesConverter(ParentValueContainer parent) {
+-      this.parent = parent;
+-    }
+-
+-    @Override
+-    final public void addBinary(Binary value) {
+-      parent.add(ByteBuffer.wrap(value.getBytes()));
+-    }
+-
+-  }
+-
+-  static final class FieldStringConverter extends PrimitiveConverter {
+-
+-    private final ParentValueContainer parent;
+-    private final boolean dictionarySupport;
+-    private String[] dict;
+-
+-    public FieldStringConverter(ParentValueContainer parent, boolean dictionarySupport) {
+-      this.parent = parent;
+-      this.dictionarySupport = dictionarySupport;
+-    }
+-
+-    @Override
+-    final public void addBinary(Binary value) {
+-      parent.add(value.toStringUsingUTF8());
+-    }
+-
+-    @Override
+-    public boolean hasDictionarySupport() {
+-      return dictionarySupport;
+-    }
+-
+-    @Override
+-    public void setDictionary(Dictionary dictionary) {
+-      dict = new String[dictionary.getMaxId() + 1];
+-      for (int i = 0; i <= dictionary.getMaxId(); i++) {
+-        dict[i] = dictionary.decodeToBinary(i).toStringUsingUTF8();
+-      }
+-    }
+-
+-    @Override
+-    public void addValueFromDictionary(int dictionaryId) {
+-      parent.add(dict[dictionaryId]);
+-    }
+-  }
+-
+   static final class FieldEnumConverter extends PrimitiveConverter {
+ 
+     private final ParentValueContainer parent;
+@@ -450,15 +300,13 @@ class AvroIndexedRecordConverter<T extends IndexedRecord> extends GroupConverter
+    * </pre>
+    *
+    * This class also implements LIST element backward-compatibility rules.
+-   *
+-   * @param <T> The type of elements in the list
+    */
+-  static final class AvroArrayConverter<T> extends GroupConverter {
++  static final class AvroArrayConverter extends GroupConverter {
+ 
+     private final ParentValueContainer parent;
+     private final Schema avroSchema;
+     private final Converter converter;
+-    private GenericArray<T> array;
++    private GenericArray<Object> array;
+ 
+     public AvroArrayConverter(ParentValueContainer parent, GroupType type,
+         Schema avroSchema, GenericData model) {
+@@ -473,8 +321,8 @@ class AvroIndexedRecordConverter<T extends IndexedRecord> extends GroupConverter
+         converter = newConverter(elementSchema, repeatedType, model, new ParentValueContainer() {
+           @Override
+           @SuppressWarnings("unchecked")
+-          void add(Object value) {
+-            array.add((T) value);
++          public void add(Object value) {
++            array.add(value);
+           }
+         });
+       } else {
+@@ -490,7 +338,7 @@ class AvroIndexedRecordConverter<T extends IndexedRecord> extends GroupConverter
+ 
+     @Override
+     public void start() {
+-      array = new GenericData.Array<T>(0, avroSchema);
++      array = new GenericData.Array<Object>(0, avroSchema);
+     }
+ 
+     @Override
+@@ -542,7 +390,7 @@ class AvroIndexedRecordConverter<T extends IndexedRecord> extends GroupConverter
+      * </pre>
+      */
+     final class ElementConverter extends GroupConverter {
+-      private T element;
++      private Object element;
+       private final Converter elementConverter;
+ 
+       public ElementConverter(GroupType repeatedType, Schema elementSchema, GenericData model) {
+@@ -550,9 +398,8 @@ class AvroIndexedRecordConverter<T extends IndexedRecord> extends GroupConverter
+         Schema nonNullElementSchema = AvroSchemaConverter.getNonNull(elementSchema);
+         this.elementConverter = newConverter(nonNullElementSchema, elementType, model, new ParentValueContainer() {
+           @Override
+-          @SuppressWarnings("unchecked")
+-          void add(Object value) {
+-            ElementConverter.this.element = (T) value;
++          public void add(Object value) {
++            ElementConverter.this.element = value;
+           }
+         });
+       }
+@@ -576,7 +423,7 @@ class AvroIndexedRecordConverter<T extends IndexedRecord> extends GroupConverter
+     }
+   }
+ 
+-  static final class AvroUnionConverter<T> extends GroupConverter {
++  static final class AvroUnionConverter extends GroupConverter {
+ 
+     private final ParentValueContainer parent;
+     private final Converter[] memberConverters;
+@@ -595,7 +442,7 @@ class AvroIndexedRecordConverter<T extends IndexedRecord> extends GroupConverter
+           Type memberType = parquetGroup.getType(parquetIndex);
+           memberConverters[parquetIndex] = newConverter(memberSchema, memberType, model, new ParentValueContainer() {
+             @Override
+-            void add(Object value) {
++            public void add(Object value) {
+               Preconditions.checkArgument(memberValue==null, "Union is resolving to more than one type");
+               memberValue = value;
+             }
+@@ -671,7 +518,7 @@ class AvroIndexedRecordConverter<T extends IndexedRecord> extends GroupConverter
+         valueConverter = newConverter(nonNullValueSchema, valueType, model, new ParentValueContainer() {
+           @Override
+           @SuppressWarnings("unchecked")
+-          void add(Object value) {
++          public void add(Object value) {
+             MapKeyValueConverter.this.value = (V) value;
+           }
+         });
+diff --git a/parquet-avro/src/main/java/parquet/avro/AvroParquetOutputFormat.java b/parquet-avro/src/main/java/parquet/avro/AvroParquetOutputFormat.java
+index fad7847..49b2ae4 100644
+--- a/parquet-avro/src/main/java/parquet/avro/AvroParquetOutputFormat.java
++++ b/parquet-avro/src/main/java/parquet/avro/AvroParquetOutputFormat.java
+@@ -28,7 +28,7 @@ import parquet.hadoop.util.ContextUtil;
+ /**
+  * A Hadoop {@link org.apache.hadoop.mapreduce.OutputFormat} for Parquet files.
+  */
+-public class AvroParquetOutputFormat extends ParquetOutputFormat<IndexedRecord> {
++public class AvroParquetOutputFormat<T> extends ParquetOutputFormat<T> {
+ 
+   /**
+    * Set the Avro schema to use for writing. The schema is translated into a Parquet
+@@ -44,7 +44,20 @@ public class AvroParquetOutputFormat extends ParquetOutputFormat<IndexedRecord>
+   }
+ 
+   public AvroParquetOutputFormat() {
+-    super(new AvroWriteSupport());
++    super(new AvroWriteSupport<T>());
+   }
+ 
++  /**
++   * Sets the {@link AvroDataSupplier} class that will be used. The data
++   * supplier provides instances of {@link org.apache.avro.generic.GenericData}
++   * that are used to deconstruct records.
++   *
++   * @param job a {@link Job} to configure
++   * @param supplierClass a supplier class
++   */
++  public static void setAvroDataSupplier(
++      Job job, Class<? extends AvroDataSupplier> supplierClass) {
++    AvroWriteSupport.setAvroDataSupplier(ContextUtil.getConfiguration(job),
++        supplierClass);
++  }
+ }
+diff --git a/parquet-avro/src/main/java/parquet/avro/AvroParquetReader.java b/parquet-avro/src/main/java/parquet/avro/AvroParquetReader.java
+index ca65de9..5f7bf84 100644
+--- a/parquet-avro/src/main/java/parquet/avro/AvroParquetReader.java
++++ b/parquet-avro/src/main/java/parquet/avro/AvroParquetReader.java
+@@ -20,7 +20,6 @@ package parquet.avro;
+ 
+ import java.io.IOException;
+ 
+-import org.apache.avro.generic.IndexedRecord;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.Path;
+ 
+@@ -30,9 +29,9 @@ import parquet.hadoop.ParquetReader;
+ /**
+  * Read Avro records from a Parquet file.
+  */
+-public class AvroParquetReader<T extends IndexedRecord> extends ParquetReader<T> {
++public class AvroParquetReader<T> extends ParquetReader<T> {
+ 
+-  public static <T extends IndexedRecord> Builder<T> builder(Path file) {
++  public static <T> Builder<T> builder(Path file) {
+     return ParquetReader.builder(new AvroReadSupport<T>(), file);
+   }
+ 
+diff --git a/parquet-avro/src/main/java/parquet/avro/AvroParquetWriter.java b/parquet-avro/src/main/java/parquet/avro/AvroParquetWriter.java
+index a79dc1b..f0690c7 100644
+--- a/parquet-avro/src/main/java/parquet/avro/AvroParquetWriter.java
++++ b/parquet-avro/src/main/java/parquet/avro/AvroParquetWriter.java
+@@ -20,9 +20,11 @@ package parquet.avro;
+ 
+ import java.io.IOException;
+ import org.apache.avro.Schema;
+-import org.apache.avro.generic.IndexedRecord;
++import org.apache.avro.generic.GenericData;
++import org.apache.avro.specific.SpecificData;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.Path;
++import parquet.column.ParquetProperties.WriterVersion;
+ import parquet.hadoop.ParquetWriter;
+ import parquet.hadoop.api.WriteSupport;
+ import parquet.hadoop.metadata.CompressionCodecName;
+@@ -30,7 +32,11 @@ import parquet.hadoop.metadata.CompressionCodecName;
+ /**
+  * Write Avro records to a Parquet file.
+  */
+-public class AvroParquetWriter<T extends IndexedRecord> extends ParquetWriter<T> {
++public class AvroParquetWriter<T> extends ParquetWriter<T> {
++
++  public static <T> Builder<T> builder(Path file) {
++    return new Builder<T>(file);
++  }
+ 
+   /** Create a new {@link AvroParquetWriter}.
+    *
+@@ -41,10 +47,11 @@ public class AvroParquetWriter<T extends IndexedRecord> extends ParquetWriter<T>
+    * @param pageSize
+    * @throws IOException
+    */
++  @Deprecated
+   public AvroParquetWriter(Path file, Schema avroSchema,
+       CompressionCodecName compressionCodecName, int blockSize,
+       int pageSize) throws IOException {
+-    super(file, AvroParquetWriter.<T>writeSupport(avroSchema),
++    super(file, AvroParquetWriter.<T>writeSupport(avroSchema, SpecificData.get()),
+ 	      compressionCodecName, blockSize, pageSize);
+   }
+ 
+@@ -58,10 +65,11 @@ public class AvroParquetWriter<T extends IndexedRecord> extends ParquetWriter<T>
+    * @param enableDictionary Whether to use a dictionary to compress columns.
+    * @throws IOException
+    */
++  @Deprecated
+   public AvroParquetWriter(Path file, Schema avroSchema,
+                            CompressionCodecName compressionCodecName, int blockSize,
+                            int pageSize, boolean enableDictionary) throws IOException {
+-    super(file, AvroParquetWriter.<T>writeSupport(avroSchema),
++    super(file, AvroParquetWriter.<T>writeSupport(avroSchema, SpecificData.get()),
+         compressionCodecName, blockSize, pageSize, enableDictionary,
+         DEFAULT_IS_VALIDATING_ENABLED);
+   }
+@@ -73,9 +81,10 @@ public class AvroParquetWriter<T extends IndexedRecord> extends ParquetWriter<T>
+    * @param avroSchema The schema to write with.
+    * @throws IOException
+    */
++  @Deprecated
+   public AvroParquetWriter(Path file, Schema avroSchema) throws IOException {
+     this(file, avroSchema, CompressionCodecName.UNCOMPRESSED,
+-	  DEFAULT_BLOCK_SIZE, DEFAULT_PAGE_SIZE);
++        DEFAULT_BLOCK_SIZE, DEFAULT_PAGE_SIZE);
+   }
+ 
+   /** Create a new {@link AvroParquetWriter}.
+@@ -89,18 +98,126 @@ public class AvroParquetWriter<T extends IndexedRecord> extends ParquetWriter<T>
+    * @param conf The Configuration to use.
+    * @throws IOException
+    */
++  @Deprecated
+   public AvroParquetWriter(Path file, Schema avroSchema,
+                            CompressionCodecName compressionCodecName,
+                            int blockSize, int pageSize, boolean enableDictionary,
+                            Configuration conf) throws IOException {
+-    super(file, AvroParquetWriter.<T>writeSupport(avroSchema),
+-        compressionCodecName, blockSize, pageSize, pageSize, enableDictionary,
+-        DEFAULT_IS_VALIDATING_ENABLED, DEFAULT_WRITER_VERSION, conf);
++    this(file, AvroParquetWriter.<T>writeSupport(avroSchema, SpecificData.get()),
++        compressionCodecName, blockSize, pageSize,
++        enableDictionary, DEFAULT_IS_VALIDATING_ENABLED, DEFAULT_WRITER_VERSION,
++        conf);
++  }
++
++  /**
++   * Create a new {@link AvroParquetWriter}.
++   *
++   * @param file The file name to write to.
++   * @param writeSupport The schema to write with.
++   * @param compressionCodecName Compression code to use, or CompressionCodecName.UNCOMPRESSED
++   * @param blockSize the block size threshold.
++   * @param pageSize See parquet write up. Blocks are subdivided into pages for alignment and other purposes.
++   * @param enableDictionary Whether to use a dictionary to compress columns.
++   * @param conf The Configuration to use.
++   * @throws IOException
++   */
++  AvroParquetWriter(Path file, WriteSupport<T> writeSupport,
++                           CompressionCodecName compressionCodecName,
++                           int blockSize, int pageSize, boolean enableDictionary,
++                           boolean enableValidation, WriterVersion writerVersion,
++                           Configuration conf)
++      throws IOException {
++    super(file, writeSupport, compressionCodecName, blockSize, pageSize,
++        pageSize, enableDictionary, enableValidation, writerVersion, conf);
++  }
++
++  private static <T> WriteSupport<T> writeSupport(Schema avroSchema,
++                                                  GenericData model) {
++    return new AvroWriteSupport<T>(
++        new AvroSchemaConverter().convert(avroSchema), avroSchema, model);
+   }
+ 
+-  @SuppressWarnings("unchecked")
+-  private static <T> WriteSupport<T> writeSupport(Schema avroSchema) {
+-    return (WriteSupport<T>) new AvroWriteSupport(
+-        new AvroSchemaConverter().convert(avroSchema), avroSchema);
++  public static class Builder<T> {
++    private final Path file;
++    private Configuration conf = new Configuration();
++    private CompressionCodecName codecName = DEFAULT_COMPRESSION_CODEC_NAME;
++    private int blockSize = DEFAULT_BLOCK_SIZE;
++    private int pageSize = DEFAULT_PAGE_SIZE;
++    private boolean enableDictionary = DEFAULT_IS_DICTIONARY_ENABLED;
++    private boolean enableValidation = DEFAULT_IS_VALIDATING_ENABLED;
++    private WriterVersion writerVersion = DEFAULT_WRITER_VERSION;
++
++    // avro-specific
++    private Schema schema = null;
++    private GenericData model = SpecificData.get();
++
++    private Builder(Path file) {
++      this.file = file;
++    }
++
++    public Builder<T> withConf(Configuration conf) {
++      this.conf = conf;
++      return this;
++    }
++
++    public Builder<T> withCompressionCodec(CompressionCodecName codecName) {
++      this.codecName = codecName;
++      return this;
++    }
++
++    public Builder<T> withBlockSize(int blockSize) {
++      this.blockSize = blockSize;
++      return this;
++    }
++
++    public Builder<T> withPageSize(int pageSize) {
++      this.pageSize = pageSize;
++      return this;
++    }
++
++    public Builder<T> enableDictionaryEncoding() {
++      this.enableDictionary = true;
++      return this;
++    }
++
++    public Builder<T> withDictionaryEncoding(boolean enableDictionary) {
++      this.enableDictionary = enableDictionary;
++      return this;
++    }
++
++    public Builder<T> enableValidation() {
++      this.enableValidation = true;
++      return this;
++    }
++
++    public Builder<T> withValidation(boolean enableValidation) {
++      this.enableValidation = enableValidation;
++      return this;
++    }
++
++    public Builder<T> withWriterVersion(WriterVersion version) {
++      this.writerVersion = version;
++      return this;
++    }
++
++    public Builder<T> withSchema(Schema schema) {
++      this.schema = schema;
++      return this;
++    }
++
++    public Builder<T> withDataModel(GenericData model) {
++      this.model = model;
++      return this;
++    }
++
++    private WriteSupport<T> getWriteSupport() {
++      return AvroParquetWriter.<T>writeSupport(schema, model);
++    }
++
++    public ParquetWriter<T> build() throws IOException {
++      return new AvroParquetWriter<T>(file, getWriteSupport(), codecName,
++          blockSize, pageSize, enableDictionary, enableValidation,
++          writerVersion, conf);
++    }
+   }
+ }
+diff --git a/parquet-avro/src/main/java/parquet/avro/AvroReadSupport.java b/parquet-avro/src/main/java/parquet/avro/AvroReadSupport.java
+index e72d691..3d9a5ab 100644
+--- a/parquet-avro/src/main/java/parquet/avro/AvroReadSupport.java
++++ b/parquet-avro/src/main/java/parquet/avro/AvroReadSupport.java
+@@ -21,7 +21,7 @@ package parquet.avro;
+ import java.util.LinkedHashMap;
+ import java.util.Map;
+ import org.apache.avro.Schema;
+-import org.apache.avro.generic.IndexedRecord;
++import org.apache.avro.generic.GenericData;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.util.ReflectionUtils;
+ import parquet.hadoop.api.ReadSupport;
+@@ -29,11 +29,11 @@ import parquet.io.api.RecordMaterializer;
+ import parquet.schema.MessageType;
+ 
+ /**
+- * Avro implementation of {@link ReadSupport} for Avro {@link IndexedRecord}s which cover both Avro Specific and
+- * Generic. Users should use {@link AvroParquetReader} or {@link AvroParquetInputFormat} rather than using
+- * this class directly.
++ * Avro implementation of {@link ReadSupport} for avro generic, specific, and
++ * reflect models. Use {@link AvroParquetReader} or
++ * {@link AvroParquetInputFormat} rather than using this class directly.
+  */
+-public class AvroReadSupport<T extends IndexedRecord> extends ReadSupport<T> {
++public class AvroReadSupport<T> extends ReadSupport<T> {
+ 
+   public static String AVRO_REQUESTED_PROJECTION = "parquet.avro.projection";
+   private static final String AVRO_READ_SCHEMA = "parquet.avro.read.schema";
+@@ -43,7 +43,10 @@ public class AvroReadSupport<T extends IndexedRecord> extends ReadSupport<T> {
+   static final String OLD_AVRO_SCHEMA_METADATA_KEY = "avro.schema";
+   private static final String AVRO_READ_SCHEMA_METADATA_KEY = "avro.read.schema";
+ 
+-  public static String AVRO_DATA_SUPPLIER = "parquet.avro.data.supplier";
++  public static final String AVRO_DATA_SUPPLIER = "parquet.avro.data.supplier";
++
++  public static final String AVRO_COMPATIBILITY = "parquet.avro.compatible";
++  public static final boolean AVRO_DEFAULT_COMPATIBILITY = true;
+ 
+   /**
+    * @see parquet.avro.AvroParquetInputFormat#setRequestedProjection(org.apache.hadoop.mapreduce.Job, org.apache.avro.Schema)
+@@ -69,18 +72,23 @@ public class AvroReadSupport<T extends IndexedRecord> extends ReadSupport<T> {
+                           Map<String, String> keyValueMetaData,
+                           MessageType fileSchema) {
+     MessageType projection = fileSchema;
+-    Map<String, String> metadata = null;
++    Map<String, String> metadata = new LinkedHashMap<String, String>();
+ 
+     String requestedProjectionString = configuration.get(AVRO_REQUESTED_PROJECTION);
+     if (requestedProjectionString != null) {
+       Schema avroRequestedProjection = new Schema.Parser().parse(requestedProjectionString);
+       projection = new AvroSchemaConverter(configuration).convert(avroRequestedProjection);
+     }
++
+     String avroReadSchema = configuration.get(AVRO_READ_SCHEMA);
+     if (avroReadSchema != null) {
+-      metadata = new LinkedHashMap<String, String>();
+       metadata.put(AVRO_READ_SCHEMA_METADATA_KEY, avroReadSchema);
+     }
++
++    if (configuration.getBoolean(AVRO_COMPATIBILITY, AVRO_DEFAULT_COMPATIBILITY)) {
++      metadata.put(AVRO_COMPATIBILITY, "true");
++    }
++
+     return new ReadContext(projection, metadata);
+   }
+ 
+@@ -88,10 +96,11 @@ public class AvroReadSupport<T extends IndexedRecord> extends ReadSupport<T> {
+   public RecordMaterializer<T> prepareForRead(
+       Configuration configuration, Map<String, String> keyValueMetaData,
+       MessageType fileSchema, ReadContext readContext) {
++    Map<String, String> metadata = readContext.getReadSupportMetadata();
+     MessageType parquetSchema = readContext.getRequestedSchema();
+     Schema avroSchema;
+-    if (readContext.getReadSupportMetadata() != null &&
+-        readContext.getReadSupportMetadata().get(AVRO_READ_SCHEMA_METADATA_KEY) != null) {
++
++    if (readContext.getReadSupportMetadata().get(AVRO_READ_SCHEMA_METADATA_KEY) != null) {
+       // use the Avro read schema provided by the user
+       avroSchema = new Schema.Parser().parse(readContext.getReadSupportMetadata().get(AVRO_READ_SCHEMA_METADATA_KEY));
+     } else if (keyValueMetaData.get(AVRO_SCHEMA_METADATA_KEY) != null) {
+@@ -104,10 +113,25 @@ public class AvroReadSupport<T extends IndexedRecord> extends ReadSupport<T> {
+       // default to converting the Parquet schema into an Avro schema
+       avroSchema = new AvroSchemaConverter(configuration).convert(parquetSchema);
+     }
+-    Class<? extends AvroDataSupplier> suppClass = configuration.getClass(AVRO_DATA_SUPPLIER,
+-        SpecificDataSupplier.class,
+-        AvroDataSupplier.class);
+-    AvroDataSupplier supplier =ReflectionUtils.newInstance(suppClass, configuration);
+-    return new AvroRecordMaterializer<T>(parquetSchema, avroSchema, supplier.get());
++
++    GenericData model = getDataModel(configuration);
++    String compatEnabled = metadata.get(AvroReadSupport.AVRO_COMPATIBILITY);
++    if (compatEnabled != null && Boolean.valueOf(compatEnabled)) {
++      return newCompatMaterializer(parquetSchema, avroSchema, model);
++    }
++    return new AvroRecordMaterializer<T>(parquetSchema, avroSchema, model);
++  }
++
++  @SuppressWarnings("unchecked")
++  private static <T> RecordMaterializer<T> newCompatMaterializer(
++      MessageType parquetSchema, Schema avroSchema, GenericData model) {
++    return (RecordMaterializer<T>) new AvroCompatRecordMaterializer(
++        parquetSchema, avroSchema, model);
++  }
++
++  private static GenericData getDataModel(Configuration conf) {
++    Class<? extends AvroDataSupplier> suppClass = conf.getClass(
++        AVRO_DATA_SUPPLIER, SpecificDataSupplier.class, AvroDataSupplier.class);
++    return ReflectionUtils.newInstance(suppClass, conf).get();
+   }
+ }
+diff --git a/parquet-avro/src/main/java/parquet/avro/AvroRecordConverter.java b/parquet-avro/src/main/java/parquet/avro/AvroRecordConverter.java
+new file mode 100644
+index 0000000..db4fd45
+--- /dev/null
++++ b/parquet-avro/src/main/java/parquet/avro/AvroRecordConverter.java
+@@ -0,0 +1,827 @@
++/* 
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ * 
++ *   http://www.apache.org/licenses/LICENSE-2.0
++ * 
++ * Unless required by applicable law or agreed to in writing,
++ * software distributed under the License is distributed on an
++ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++ * KIND, either express or implied.  See the License for the
++ * specific language governing permissions and limitations
++ * under the License.
++ */
++package parquet.avro;
++
++import it.unimi.dsi.fastutil.booleans.BooleanArrayList;
++import it.unimi.dsi.fastutil.bytes.ByteArrayList;
++import it.unimi.dsi.fastutil.chars.CharArrayList;
++import it.unimi.dsi.fastutil.doubles.DoubleArrayList;
++import it.unimi.dsi.fastutil.floats.FloatArrayList;
++import it.unimi.dsi.fastutil.ints.IntArrayList;
++import it.unimi.dsi.fastutil.longs.LongArrayList;
++import it.unimi.dsi.fastutil.shorts.ShortArrayList;
++import java.lang.reflect.InvocationTargetException;
++import java.lang.reflect.Method;
++import java.util.ArrayList;
++import java.util.Collection;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import org.apache.avro.Schema;
++import org.apache.avro.generic.GenericData;
++import org.apache.avro.reflect.ReflectData;
++import org.apache.avro.specific.SpecificData;
++import parquet.Preconditions;
++import parquet.io.InvalidRecordException;
++import parquet.io.api.Binary;
++import parquet.io.api.Converter;
++import parquet.io.api.GroupConverter;
++import parquet.io.api.PrimitiveConverter;
++import parquet.schema.GroupType;
++import parquet.schema.MessageType;
++import parquet.schema.Type;
++
++import static parquet.schema.Type.Repetition.REQUIRED;
++
++/**
++ * This {@link Converter} class materializes records for a given
++ * {@link GenericData Avro data model}. This replaces
++ * {@link AvroIndexedRecordConverter} and works with generic, specific, and
++ * reflect records.
++ *
++ * @param <T> a subclass of Avro's IndexedRecord
++ */
++class AvroRecordConverter<T> extends AvroConverters.AvroGroupConverter {
++
++  protected T currentRecord;
++  private final Converter[] converters;
++
++  private final Schema avroSchema;
++
++  private final GenericData model;
++  private final Map<Schema.Field, Object> recordDefaults = new HashMap<Schema.Field, Object>();
++
++  public AvroRecordConverter(MessageType parquetSchema, Schema avroSchema,
++                             GenericData baseModel) {
++    this(null, parquetSchema, avroSchema, baseModel);
++  }
++
++  public AvroRecordConverter(ParentValueContainer parent,
++                             GroupType parquetSchema, Schema avroSchema,
++                             GenericData model) {
++    super(parent);
++    this.avroSchema = avroSchema;
++    this.model = (model == null ? ReflectData.get() : model);
++    this.converters = new Converter[parquetSchema.getFieldCount()];
++
++    Map<String, Integer> avroFieldIndexes = new HashMap<String, Integer>();
++    int avroFieldIndex = 0;
++    for (Schema.Field field: avroSchema.getFields()) {
++        avroFieldIndexes.put(field.name(), avroFieldIndex++);
++    }
++
++    int parquetFieldIndex = 0;
++    for (Type parquetField: parquetSchema.getFields()) {
++      final Schema.Field avroField = getAvroField(parquetField.getName());
++      Schema nonNullSchema = AvroSchemaConverter.getNonNull(avroField.schema());
++      final int finalAvroIndex = avroFieldIndexes.remove(avroField.name());
++      converters[parquetFieldIndex++] = newConverter(
++          nonNullSchema, parquetField, this.model, new ParentValueContainer() {
++        @Override
++        public void add(Object value) {
++          AvroRecordConverter.this.set(avroField.name(), finalAvroIndex, value);
++        }
++      });
++    }
++
++    // store defaults for any new Avro fields from avroSchema that are not in
++    // the writer schema (parquetSchema)
++    for (String fieldName : avroFieldIndexes.keySet()) {
++      Schema.Field field = avroSchema.getField(fieldName);
++      if (field.schema().getType() == Schema.Type.NULL) {
++        continue; // skip null since Parquet does not write nulls
++      }
++      if (field.defaultValue() == null || this.model.getDefaultValue(field) == null) {
++        continue; // field has no default
++      }
++      // use this.model because model may be null
++      recordDefaults.put(field, this.model.getDefaultValue(field));
++    }
++  }
++
++  private Schema.Field getAvroField(String parquetFieldName) {
++    Schema.Field avroField = avroSchema.getField(parquetFieldName);
++    if (avroField != null) {
++      return avroField;
++    }
++
++    for (Schema.Field f : avroSchema.getFields()) {
++      if (f.aliases().contains(parquetFieldName)) {
++        return f;
++      }
++    }
++
++    throw new InvalidRecordException(String.format(
++        "Parquet/Avro schema mismatch: Avro field '%s' not found",
++        parquetFieldName));
++  }
++
++  private static Converter newConverter(Schema schema, Type type,
++      GenericData model, ParentValueContainer parent) {
++    if (schema.getType().equals(Schema.Type.BOOLEAN)) {
++      return new AvroConverters.FieldBooleanConverter(parent);
++    } else if (schema.getType().equals(Schema.Type.INT)) {
++      Class<?> datumClass = getDatumClass(schema, model);
++      if (datumClass == null) {
++        return new AvroConverters.FieldIntegerConverter(parent);
++      } else if (datumClass == byte.class || datumClass == Byte.class) {
++        return new AvroConverters.FieldByteConverter(parent);
++      } else if (datumClass == short.class || datumClass == Short.class) {
++        return new AvroConverters.FieldShortConverter(parent);
++      } else if (datumClass == char.class || datumClass == Character.class) {
++        return new AvroConverters.FieldCharConverter(parent);
++      }
++      return new AvroConverters.FieldIntegerConverter(parent);
++    } else if (schema.getType().equals(Schema.Type.LONG)) {
++      return new AvroConverters.FieldLongConverter(parent);
++    } else if (schema.getType().equals(Schema.Type.FLOAT)) {
++      return new AvroConverters.FieldFloatConverter(parent);
++    } else if (schema.getType().equals(Schema.Type.DOUBLE)) {
++      return new AvroConverters.FieldDoubleConverter(parent);
++    } else if (schema.getType().equals(Schema.Type.BYTES)) {
++      Class<?> datumClass = getDatumClass(schema, model);
++      if (datumClass == null) {
++        return new AvroConverters.FieldByteBufferConverter(parent);
++      } else if (datumClass.isArray() && datumClass.getComponentType() == byte.class) {
++        return new AvroConverters.FieldByteArrayConverter(parent);
++      }
++      return new AvroConverters.FieldByteBufferConverter(parent);
++    } else if (schema.getType().equals(Schema.Type.STRING)) {
++      return new AvroConverters.FieldStringConverter(parent);
++    } else if (schema.getType().equals(Schema.Type.RECORD)) {
++      return new AvroRecordConverter(parent, type.asGroupType(), schema, model);
++    } else if (schema.getType().equals(Schema.Type.ENUM)) {
++      return new AvroConverters.FieldEnumConverter(parent, schema, model);
++    } else if (schema.getType().equals(Schema.Type.ARRAY)) {
++      Class<?> datumClass = getDatumClass(schema, model);
++      if (datumClass != null && datumClass.isArray()) {
++        return new AvroArrayConverter(
++            parent, type.asGroupType(), schema, model, datumClass);
++      } else {
++        return new AvroCollectionConverter(
++            parent, type.asGroupType(), schema, model, datumClass);
++      }
++    } else if (schema.getType().equals(Schema.Type.MAP)) {
++      return new MapConverter(parent, type.asGroupType(), schema, model);
++    } else if (schema.getType().equals(Schema.Type.UNION)) {
++      return new AvroUnionConverter(parent, type, schema, model);
++    } else if (schema.getType().equals(Schema.Type.FIXED)) {
++      return new AvroConverters.FieldFixedConverter(parent, schema, model);
++    }
++    throw new UnsupportedOperationException(String.format(
++        "Cannot convert Avro type: %s to Parquet type: %s", schema, type));
++  }
++
++  @SuppressWarnings("unchecked")
++  private static <T> Class<T> getDatumClass(Schema schema, GenericData model) {
++    if (model instanceof SpecificData) {
++      // this works for reflect as well
++      return ((SpecificData) model).getClass(schema);
++
++    } else if (model.getClass() == GenericData.class) {
++      return null;
++
++    } else {
++      // try to use reflection (for ThriftData and others)
++      Class<? extends GenericData> modelClass = model.getClass();
++      Method getClassMethod;
++      try {
++        getClassMethod = modelClass.getMethod("getClass", Schema.class);
++      } catch (NoSuchMethodException e) {
++        return null; // no getClass method
++      }
++
++      try {
++        return (Class<T>) getClassMethod.invoke(schema);
++      } catch (IllegalAccessException e) {
++        return null;
++      } catch (InvocationTargetException e) {
++        return null;
++      }
++    }
++  }
++
++  protected void set(String name, int avroIndex, Object value) {
++    model.setField(currentRecord, name, avroIndex, value);
++  }
++
++  @Override
++  public Converter getConverter(int fieldIndex) {
++    return converters[fieldIndex];
++  }
++
++  @Override
++  @SuppressWarnings("unchecked")
++  public void start() {
++    this.currentRecord = (T) model.newRecord(null, avroSchema);
++  }
++
++  @Override
++  public void end() {
++    fillInDefaults();
++    if (parent != null) {
++      parent.add(currentRecord);
++    }
++  }
++
++  private void fillInDefaults() {
++    for (Map.Entry<Schema.Field, Object> entry : recordDefaults.entrySet()) {
++      Schema.Field f = entry.getKey();
++      // replace following with model.deepCopy once AVRO-1455 is being used
++      Object defaultValue = deepCopy(f.schema(), entry.getValue());
++      set(f.name(), f.pos(), defaultValue);
++    }
++  }
++
++  private Object deepCopy(Schema schema, Object value) {
++    switch (schema.getType()) {
++      case BOOLEAN:
++      case INT:
++      case LONG:
++      case FLOAT:
++      case DOUBLE:
++        return value;
++      default:
++        return model.deepCopy(schema, value);
++    }
++  }
++
++  T getCurrentRecord() {
++    return currentRecord;
++  }
++
++  /**
++   * Converter for a list to a Java Collection.
++   *
++   * <pre>
++   *   optional group the_list (LIST) { <-- this layer
++   *     repeated group array {
++   *       optional (type) element;
++   *     }
++   *   }
++   * </pre>
++   *
++   * This class also implements LIST element backward-compatibility rules.
++   */
++  static final class AvroCollectionConverter extends GroupConverter {
++
++    private final ParentValueContainer parent;
++    private final Schema avroSchema;
++    private final Converter converter;
++    private Class<?> containerClass;
++    private Collection<Object> container;
++
++    public AvroCollectionConverter(ParentValueContainer parent, GroupType type,
++                                   Schema avroSchema, GenericData model,
++                                   Class<?> containerClass) {
++      this.parent = parent;
++      this.avroSchema = avroSchema;
++      this.containerClass = containerClass;
++      Schema elementSchema = this.avroSchema.getElementType();
++      Type repeatedType = type.getType(0);
++      // always determine whether the repeated type is the element type by
++      // matching it against the element schema.
++      if (isElementType(repeatedType, elementSchema)) {
++        // the element type is the repeated type (and required)
++        converter = newConverter(elementSchema, repeatedType, model, new ParentValueContainer() {
++          @Override
++          @SuppressWarnings("unchecked")
++          public void add(Object value) {
++            container.add(value);
++          }
++        });
++      } else {
++        // the element is wrapped in a synthetic group and may be optional
++        converter = new ElementConverter(repeatedType.asGroupType(), elementSchema, model);
++      }
++    }
++
++    @Override
++    public Converter getConverter(int fieldIndex) {
++      return converter;
++    }
++
++    @Override
++    public void start() {
++      container = newContainer();
++    }
++
++    @Override
++    public void end() {
++      parent.add(container);
++    }
++
++    @SuppressWarnings("unchecked")
++    private Collection<Object> newContainer() {
++      if (containerClass == null) {
++        return new GenericData.Array<Object>(0, avroSchema);
++      } else if (containerClass.isAssignableFrom(ArrayList.class)) {
++        return new ArrayList<Object>();
++      } else {
++        // not need to use the data model to instantiate because it resolved
++        // the class, which used the correct ClassLoader
++        return (Collection<Object>) ReflectData.newInstance(containerClass, avroSchema);
++      }
++    }
++
++    /**
++     * Converter for list elements.
++     *
++     * <pre>
++     *   optional group the_list (LIST) {
++     *     repeated group array { <-- this layer
++     *       optional (type) element;
++     *     }
++     *   }
++     * </pre>
++     */
++    final class ElementConverter extends GroupConverter {
++      private Object element;
++      private final Converter elementConverter;
++
++      public ElementConverter(GroupType repeatedType, Schema elementSchema, GenericData model) {
++        Type elementType = repeatedType.getType(0);
++        Schema nonNullElementSchema = AvroSchemaConverter.getNonNull(elementSchema);
++        this.elementConverter = newConverter(nonNullElementSchema, elementType, model, new ParentValueContainer() {
++          @Override
++          @SuppressWarnings("unchecked")
++          public void add(Object value) {
++            ElementConverter.this.element = value;
++          }
++        });
++      }
++
++      @Override
++      public Converter getConverter(int fieldIndex) {
++        Preconditions.checkArgument(
++            fieldIndex == 0, "Illegal field index: " + fieldIndex);
++        return elementConverter;
++      }
++
++      @Override
++      public void start() {
++        element = null;
++      }
++
++      @Override
++      public void end() {
++        container.add(element);
++      }
++    }
++  }
++
++  /**
++   * Converter for a list to a Java array.
++   *
++   * <pre>
++   *   optional group the_list (LIST) { <-- this layer
++   *     repeated group array {
++   *       optional (type) element;
++   *     }
++   *   }
++   * </pre>
++   *
++   * This class also implements LIST element backward-compatibility rules.
++   */
++  static final class AvroArrayConverter extends GroupConverter {
++
++    private final ParentValueContainer parent;
++    private final Schema avroSchema;
++    private final Converter converter;
++    private Class<?> elementClass;
++    private Collection<?> container;
++
++    public AvroArrayConverter(ParentValueContainer parent, GroupType type,
++                              Schema avroSchema, GenericData model,
++                              Class<?> arrayClass) {
++      this.parent = parent;
++      this.avroSchema = avroSchema;
++
++      Preconditions.checkArgument(arrayClass.isArray(),
++          "Cannot convert non-array: " + arrayClass.getName());
++      this.elementClass = arrayClass.getComponentType();
++
++      ParentValueContainer setter = createSetterAndContainer();
++      Schema elementSchema = this.avroSchema.getElementType();
++      Type repeatedType = type.getType(0);
++
++      // always determine whether the repeated type is the element type by
++      // matching it against the element schema.
++      if (isElementType(repeatedType, elementSchema)) {
++        // the element type is the repeated type (and required)
++        converter = newConverter(elementSchema, repeatedType, model, setter);
++      } else {
++        // the element is wrapped in a synthetic group and may be optional
++        converter = new PrimitiveElementConverter(
++            repeatedType.asGroupType(), elementSchema, model, setter);
++      }
++    }
++
++    @Override
++    public Converter getConverter(int fieldIndex) {
++      return converter;
++    }
++
++    @Override
++    public void start() {
++      // end creates a new copy of the array so the container is safe to reuse
++      container.clear();
++    }
++
++    @Override
++    public void end() {
++      if (elementClass == boolean.class) {
++        parent.add(((BooleanArrayList) container).toBooleanArray());
++      } else if (elementClass == byte.class) {
++        parent.add(((ByteArrayList) container).toByteArray());
++      } else if (elementClass == char.class) {
++        parent.add(((CharArrayList) container).toCharArray());
++      } else if (elementClass == short.class) {
++        parent.add(((ShortArrayList) container).toShortArray());
++      } else if (elementClass == int.class) {
++        parent.add(((IntArrayList) container).toIntArray());
++      } else if (elementClass == long.class) {
++        parent.add(((LongArrayList) container).toLongArray());
++      } else if (elementClass == float.class) {
++        parent.add(((FloatArrayList) container).toFloatArray());
++      } else if (elementClass == double.class) {
++        parent.add(((DoubleArrayList) container).toDoubleArray());
++      } else {
++        parent.add(((ArrayList) container).toArray());
++      }
++    }
++
++    @SuppressWarnings("unchecked")
++    private ParentValueContainer createSetterAndContainer() {
++      if (elementClass == boolean.class) {
++        final BooleanArrayList list = new BooleanArrayList();
++        this.container = list;
++        return new ParentValueContainer() {
++          @Override
++          public void addBoolean(boolean value) {
++            list.add(value);
++          }
++        };
++      } else if (elementClass == byte.class) {
++        final ByteArrayList list = new ByteArrayList();
++        this.container = list;
++        return new ParentValueContainer() {
++          @Override
++          public void addByte(byte value) {
++            list.add(value);
++          }
++        };
++      } else if (elementClass == char.class) {
++        final CharArrayList list = new CharArrayList();
++        this.container = list;
++        return new ParentValueContainer() {
++          @Override
++          public void addChar(char value) {
++            list.add(value);
++          }
++        };
++      } else if (elementClass == short.class) {
++        final ShortArrayList list = new ShortArrayList();
++        this.container = list;
++        return new ParentValueContainer() {
++          @Override
++          public void addShort(short value) {
++            list.add(value);
++          }
++        };
++      } else if (elementClass == int.class) {
++        final IntArrayList list = new IntArrayList();
++        this.container = list;
++        return new ParentValueContainer() {
++          @Override
++          public void addInt(int value) {
++            list.add(value);
++          }
++        };
++      } else if (elementClass == long.class) {
++        final LongArrayList list = new LongArrayList();
++        this.container = list;
++        return new ParentValueContainer() {
++          @Override
++          public void addLong(long value) {
++            list.add(value);
++          }
++        };
++      } else if (elementClass == float.class) {
++        final FloatArrayList list = new FloatArrayList();
++        this.container = list;
++        return new ParentValueContainer() {
++          @Override
++          public void addFloat(float value) {
++            list.add(value);
++          }
++        };
++      } else if (elementClass == double.class) {
++        final DoubleArrayList list = new DoubleArrayList();
++        this.container = list;
++        return new ParentValueContainer() {
++          @Override
++          public void addDouble(double value) {
++            list.add(value);
++          }
++        };
++      } else {
++        // this will end up as Object[]
++        final List<Object> list = new ArrayList<Object>();
++        this.container = list;
++        return new ParentValueContainer() {
++          @Override
++          public void add(Object value) {
++            list.add(value);
++          }
++        };
++      }
++
++    }
++
++    /**
++     * Converter for primitive list elements.
++     *
++     * <pre>
++     *   optional group the_list (LIST) {
++     *     repeated group array { <-- this layer
++     *       optional (type) element;
++     *     }
++     *   }
++     * </pre>
++     */
++    final class PrimitiveElementConverter extends GroupConverter {
++      private boolean isSet;
++      private final Converter elementConverter;
++
++      public PrimitiveElementConverter(GroupType repeatedType,
++                                       Schema elementSchema, GenericData model,
++                                       final ParentValueContainer setter) {
++        Type elementType = repeatedType.getType(0);
++        Preconditions.checkArgument(
++            !elementClass.isPrimitive() || elementType.isRepetition(REQUIRED),
++            "Cannot convert list of optional elements to primitive array");
++        Schema nonNullElementSchema = AvroSchemaConverter.getNonNull(elementSchema);
++        this.elementConverter = newConverter(
++            nonNullElementSchema, elementType, model, new ParentValueContainer() {
++              @Override
++              public void add(Object value) {
++                isSet = true;
++                setter.add(value);
++              }
++
++              @Override
++              public void addByte(byte value) {
++                isSet = true;
++                setter.addByte(value);
++              }
++
++              @Override
++              public void addBoolean(boolean value) {
++                isSet = true;
++                setter.addBoolean(value);
++              }
++
++              @Override
++              public void addChar(char value) {
++                isSet = true;
++                setter.addChar(value);
++              }
++
++              @Override
++              public void addShort(short value) {
++                isSet = true;
++                setter.addShort(value);
++              }
++
++              @Override
++              public void addInt(int value) {
++                isSet = true;
++                setter.addInt(value);
++              }
++
++              @Override
++              public void addLong(long value) {
++                isSet = true;
++                setter.addLong(value);
++              }
++
++              @Override
++              public void addFloat(float value) {
++                isSet = true;
++                setter.addFloat(value);
++              }
++
++              @Override
++              public void addDouble(double value) {
++                isSet = true;
++                setter.addDouble(value);
++              }
++            });
++      }
++
++      @Override
++      public Converter getConverter(int fieldIndex) {
++        Preconditions.checkArgument(
++            fieldIndex == 0, "Illegal field index: " + fieldIndex);
++        return elementConverter;
++      }
++
++      @Override
++      public void start() {
++        isSet = false;
++      }
++
++      @Override
++      public void end() {
++        if (!isSet) {
++          container.add(null);
++        }
++      }
++    }
++  }
++
++  /**
++   * Returns whether the given type is the element type of a list or is a
++   * synthetic group with one field that is the element type. This is
++   * determined by checking whether the type can be a synthetic group and by
++   * checking whether a potential synthetic group matches the expected schema.
++   * <p>
++   * Unlike {@link AvroSchemaConverter#isElementType(Type, String)}, this
++   * method never guesses because the expected schema is known.
++   *
++   * @param repeatedType a type that may be the element type
++   * @param elementSchema the expected Schema for list elements
++   * @return {@code true} if the repeatedType is the element schema
++   */
++  private static boolean isElementType(Type repeatedType, Schema elementSchema) {
++    if (repeatedType.isPrimitive() ||
++        repeatedType.asGroupType().getFieldCount() > 1) {
++      // The repeated type must be the element type because it is an invalid
++      // synthetic wrapper (must be a group with one field).
++      return true;
++    } else if (elementSchema != null &&
++        elementSchema.getType() == Schema.Type.RECORD &&
++        elementSchema.getFields().size() == 1 &&
++        elementSchema.getFields().get(0).name().equals(
++            repeatedType.asGroupType().getFieldName(0))) {
++      // The repeated type must be the element type because it matches the
++      // structure of the Avro element's schema.
++      return true;
++    }
++    return false;
++  }
++
++  static final class AvroUnionConverter extends AvroConverters.AvroGroupConverter {
++    private final Converter[] memberConverters;
++    private Object memberValue = null;
++
++    public AvroUnionConverter(ParentValueContainer parent, Type parquetSchema,
++                              Schema avroSchema, GenericData model) {
++      super(parent);
++      GroupType parquetGroup = parquetSchema.asGroupType();
++      this.memberConverters = new Converter[ parquetGroup.getFieldCount()];
++
++      int parquetIndex = 0;
++      for (int index = 0; index < avroSchema.getTypes().size(); index++) {
++        Schema memberSchema = avroSchema.getTypes().get(index);
++        if (!memberSchema.getType().equals(Schema.Type.NULL)) {
++          Type memberType = parquetGroup.getType(parquetIndex);
++          memberConverters[parquetIndex] = newConverter(memberSchema, memberType, model, new ParentValueContainer() {
++            @Override
++            public void add(Object value) {
++              Preconditions.checkArgument(
++                  AvroUnionConverter.this.memberValue == null,
++                  "Union is resolving to more than one type");
++              memberValue = value;
++            }
++          });
++          parquetIndex++; // Note for nulls the parquetIndex id not increased
++        }
++      }
++    }
++
++    @Override
++    public Converter getConverter(int fieldIndex) {
++      return memberConverters[fieldIndex];
++    }
++
++    @Override
++    public void start() {
++      memberValue = null;
++    }
++
++    @Override
++    public void end() {
++      parent.add(memberValue);
++    }
++  }
++
++  static final class MapConverter<V> extends GroupConverter {
++
++    private final ParentValueContainer parent;
++    private final Converter keyValueConverter;
++    private final Schema schema;
++    private final Class<?> mapClass;
++    private Map<String, V> map;
++
++    public MapConverter(ParentValueContainer parent, GroupType mapType,
++        Schema mapSchema, GenericData model) {
++      this.parent = parent;
++      GroupType repeatedKeyValueType = mapType.getType(0).asGroupType();
++      this.keyValueConverter = new MapKeyValueConverter(
++          repeatedKeyValueType, mapSchema, model);
++      this.schema = mapSchema;
++      this.mapClass = getDatumClass(mapSchema, model);
++    }
++
++    @Override
++    public Converter getConverter(int fieldIndex) {
++      return keyValueConverter;
++    }
++
++    @Override
++    public void start() {
++      this.map = newMap();
++    }
++
++    @Override
++    public void end() {
++      parent.add(map);
++    }
++
++    @SuppressWarnings("unchecked")
++    private Map<String, V> newMap() {
++      if (mapClass == null || mapClass.isAssignableFrom(HashMap.class)) {
++        return new HashMap<String, V>();
++      } else {
++        return (Map<String, V>) ReflectData.newInstance(mapClass, schema);
++      }
++    }
++
++    final class MapKeyValueConverter extends GroupConverter {
++
++      private String key;
++      private V value;
++      private final Converter keyConverter;
++      private final Converter valueConverter;
++
++      public MapKeyValueConverter(GroupType keyValueType, Schema mapSchema,
++          GenericData model) {
++        keyConverter = new PrimitiveConverter() {
++          @Override
++          final public void addBinary(Binary value) {
++            key = value.toStringUsingUTF8();
++          }
++        };
++
++        Type valueType = keyValueType.getType(1);
++        Schema nonNullValueSchema = AvroSchemaConverter.getNonNull(mapSchema.getValueType());
++        valueConverter = newConverter(nonNullValueSchema, valueType, model, new ParentValueContainer() {
++          @Override
++          @SuppressWarnings("unchecked")
++          public void add(Object value) {
++            MapKeyValueConverter.this.value = (V) value;
++          }
++        });
++      }
++
++      @Override
++      public Converter getConverter(int fieldIndex) {
++        if (fieldIndex == 0) {
++          return keyConverter;
++        } else if (fieldIndex == 1) {
++          return valueConverter;
++        }
++        throw new IllegalArgumentException("only the key (0) and value (1) fields expected: " + fieldIndex);
++      }
++
++      @Override
++      public void start() {
++        key = null;
++        value = null;
++      }
++
++      @Override
++      public void end() {
++        map.put(key, value);
++      }
++    }
++  }
++}
+diff --git a/parquet-avro/src/main/java/parquet/avro/AvroRecordMaterializer.java b/parquet-avro/src/main/java/parquet/avro/AvroRecordMaterializer.java
+index 3232aea..599ba41 100644
+--- a/parquet-avro/src/main/java/parquet/avro/AvroRecordMaterializer.java
++++ b/parquet-avro/src/main/java/parquet/avro/AvroRecordMaterializer.java
+@@ -20,18 +20,17 @@ package parquet.avro;
+ 
+ import org.apache.avro.Schema;
+ import org.apache.avro.generic.GenericData;
+-import org.apache.avro.generic.IndexedRecord;
+ import parquet.io.api.GroupConverter;
+ import parquet.io.api.RecordMaterializer;
+ import parquet.schema.MessageType;
+ 
+-class AvroRecordMaterializer<T extends IndexedRecord> extends RecordMaterializer<T> {
++class AvroRecordMaterializer<T> extends RecordMaterializer<T> {
+ 
+-  private AvroIndexedRecordConverter<T> root;
++  private AvroRecordConverter<T> root;
+ 
+   public AvroRecordMaterializer(MessageType requestedSchema, Schema avroSchema,
+       GenericData baseModel) {
+-    this.root = new AvroIndexedRecordConverter<T>(requestedSchema, avroSchema, baseModel);
++    this.root = new AvroRecordConverter<T>(requestedSchema, avroSchema, baseModel);
+   }
+ 
+   @Override
+diff --git a/parquet-avro/src/main/java/parquet/avro/AvroWriteSupport.java b/parquet-avro/src/main/java/parquet/avro/AvroWriteSupport.java
+index 59320be..21d6545 100644
+--- a/parquet-avro/src/main/java/parquet/avro/AvroWriteSupport.java
++++ b/parquet-avro/src/main/java/parquet/avro/AvroWriteSupport.java
+@@ -29,19 +29,28 @@ import org.apache.avro.generic.GenericFixed;
+ import org.apache.avro.generic.IndexedRecord;
+ import org.apache.avro.util.Utf8;
+ import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.util.ReflectionUtils;
+ import parquet.hadoop.api.WriteSupport;
+ import parquet.io.api.Binary;
+ import parquet.io.api.RecordConsumer;
+ import parquet.schema.GroupType;
+ import parquet.schema.MessageType;
+ import parquet.schema.Type;
++import parquet.Preconditions;
+ 
+ /**
+- * Avro implementation of {@link WriteSupport} for {@link IndexedRecord}s - both Avro Generic and Specific.
+- * Users should use {@link AvroParquetWriter} or {@link AvroParquetOutputFormat} rather than using
+- * this class directly.
++ * Avro implementation of {@link WriteSupport} for generic, specific, and
++ * reflect models. Use {@link AvroParquetWriter} or
++ * {@link AvroParquetOutputFormat} rather than using this class directly.
+  */
+-public class AvroWriteSupport extends WriteSupport<IndexedRecord> {
++public class AvroWriteSupport<T> extends WriteSupport<T> {
++
++  public static final String AVRO_DATA_SUPPLIER = "parquet.avro.write.data.supplier";
++
++  public static void setAvroDataSupplier(
++      Configuration configuration, Class<? extends AvroDataSupplier> suppClass) {
++    configuration.set(AVRO_DATA_SUPPLIER, suppClass.getName());
++  }
+ 
+   static final String AVRO_SCHEMA = "parquet.avro.schema";
+   private static final Schema MAP_KEY_SCHEMA = Schema.create(Schema.Type.STRING);
+@@ -49,13 +58,26 @@ public class AvroWriteSupport extends WriteSupport<IndexedRecord> {
+   private RecordConsumer recordConsumer;
+   private MessageType rootSchema;
+   private Schema rootAvroSchema;
++  private GenericData model;
+ 
+   public AvroWriteSupport() {
+   }
+ 
++  /**
++   * @deprecated use {@link AvroWriteSupport(MessageType, Schema, Configuration)}
++   */
++  @Deprecated
+   public AvroWriteSupport(MessageType schema, Schema avroSchema) {
+     this.rootSchema = schema;
+     this.rootAvroSchema = avroSchema;
++    this.model = null;
++  }
++
++  public AvroWriteSupport(MessageType schema, Schema avroSchema,
++                          GenericData model) {
++    this.rootSchema = schema;
++    this.rootAvroSchema = avroSchema;
++    this.model = model;
+   }
+ 
+   /**
+@@ -68,8 +90,11 @@ public class AvroWriteSupport extends WriteSupport<IndexedRecord> {
+   @Override
+   public WriteContext init(Configuration configuration) {
+     if (rootAvroSchema == null) {
+-      rootAvroSchema = new Schema.Parser().parse(configuration.get(AVRO_SCHEMA));
+-      rootSchema = new AvroSchemaConverter().convert(rootAvroSchema);
++      this.rootAvroSchema = new Schema.Parser().parse(configuration.get(AVRO_SCHEMA));
++      this.rootSchema = new AvroSchemaConverter().convert(rootAvroSchema);
++    }
++    if (model == null) {
++      this.model = getDataModel(configuration);
+     }
+     Map<String, String> extraMetaData = new HashMap<String, String>();
+     extraMetaData.put(AvroReadSupport.AVRO_SCHEMA_METADATA_KEY, rootAvroSchema.toString());
+@@ -81,22 +106,30 @@ public class AvroWriteSupport extends WriteSupport<IndexedRecord> {
+     this.recordConsumer = recordConsumer;
+   }
+ 
+-  @Override
++  // overloaded version for backward compatibility
++  @SuppressWarnings("unchecked")
+   public void write(IndexedRecord record) {
+     recordConsumer.startMessage();
+     writeRecordFields(rootSchema, rootAvroSchema, record);
+     recordConsumer.endMessage();
+   }
+ 
++  @Override
++  public void write(T record) {
++    recordConsumer.startMessage();
++    writeRecordFields(rootSchema, rootAvroSchema, record);
++    recordConsumer.endMessage();
++  }
++
+   private void writeRecord(GroupType schema, Schema avroSchema,
+-                           IndexedRecord record) {
++                           Object record) {
+     recordConsumer.startGroup();
+     writeRecordFields(schema, avroSchema, record);
+     recordConsumer.endGroup();
+   }
+ 
+   private void writeRecordFields(GroupType schema, Schema avroSchema,
+-                                 IndexedRecord record) {
++                                 Object record) {
+     List<Type> fields = schema.getFields();
+     List<Schema.Field> avroFields = avroSchema.getFields();
+     int index = 0; // parquet ignores Avro nulls, so index may differ
+@@ -106,7 +139,7 @@ public class AvroWriteSupport extends WriteSupport<IndexedRecord> {
+         continue;
+       }
+       Type fieldType = fields.get(index);
+-      Object value = record.get(avroIndex);
++      Object value = model.getField(record, avroField.name(), avroIndex);
+       if (value != null) {
+         recordConsumer.startField(fieldType.getName(), index);
+         writeValue(fieldType, avroField.schema(), value);
+@@ -118,17 +151,165 @@ public class AvroWriteSupport extends WriteSupport<IndexedRecord> {
+     }
+   }
+ 
+-  private <T> void writeArray(GroupType schema, Schema avroSchema,
+-                              Collection<T> array) {
++  private void writeArray(GroupType schema, Schema avroSchema, Object value) {
+     recordConsumer.startGroup(); // group wrapper (original type LIST)
++    if (value instanceof Collection) {
++      writeCollection(schema, avroSchema, (Collection) value);
++    } else {
++      Class<?> arrayClass = value.getClass();
++      Preconditions.checkArgument(arrayClass.isArray(),
++          "Cannot write unless collection or array: " + arrayClass.getName());
++      writeJavaArray(schema, avroSchema, arrayClass, value);
++    }
++    recordConsumer.endGroup();
++  }
++
++  private void writeJavaArray(GroupType schema, Schema avroSchema,
++                              Class<?> arrayClass, Object value) {
++    Class<?> elementClass = arrayClass.getComponentType();
++
++    if (!elementClass.isPrimitive()) {
++      Object[] array = (Object[]) value;
++      if (array.length > 0) {
++        recordConsumer.startField("array", 0);
++        for (Object element : array) {
++          writeValue(schema.getType(0), avroSchema.getElementType(), element);
++        }
++        recordConsumer.endField("array", 0);
++      }
++      return;
++    }
++
++    switch (avroSchema.getElementType().getType()) {
++      case BOOLEAN:
++        Preconditions.checkArgument(elementClass == boolean.class,
++            "Cannot write as boolean array: " + arrayClass.getName());
++        writeBooleanArray((boolean[]) value);
++        break;
++      case INT:
++        if (elementClass == byte.class) {
++          writeByteArray((byte[]) value);
++        } else if (elementClass == char.class) {
++          writeCharArray((char[]) value);
++        } else if (elementClass == short.class) {
++          writeShortArray((short[]) value);
++        } else if (elementClass == int.class) {
++          writeIntArray((int[]) value);
++        } else {
++          throw new IllegalArgumentException(
++              "Cannot write as an int array: " + arrayClass.getName());
++        }
++        break;
++      case LONG:
++        Preconditions.checkArgument(elementClass == long.class,
++            "Cannot write as long array: " + arrayClass.getName());
++        writeLongArray((long[]) value);
++        break;
++      case FLOAT:
++        Preconditions.checkArgument(elementClass == float.class,
++            "Cannot write as float array: " + arrayClass.getName());
++        writeFloatArray((float[]) value);
++        break;
++      case DOUBLE:
++        Preconditions.checkArgument(elementClass == double.class,
++            "Cannot write as double array: " + arrayClass.getName());
++        writeDoubleArray((double[]) value);
++        break;
++      default:
++        throw new IllegalArgumentException("Cannot write " +
++            avroSchema.getElementType() + " array: " + arrayClass.getName());
++    }
++  }
++
++  private void writeCollection(GroupType schema, Schema avroSchema,
++                               Collection<?> array) {
+     if (array.size() > 0) {
+       recordConsumer.startField("array", 0);
+-      for (T elt : array) {
++      for (Object elt : array) {
+         writeValue(schema.getType(0), avroSchema.getElementType(), elt);
+       }
+       recordConsumer.endField("array", 0);
+     }
+-    recordConsumer.endGroup();
++  }
++
++  private void writeBooleanArray(boolean[] array) {
++    if (array.length > 0) {
++      recordConsumer.startField("array", 0);
++      for (boolean element : array) {
++        recordConsumer.addBoolean(element);
++      }
++      recordConsumer.endField("array", 0);
++    }
++  }
++
++  private void writeByteArray(byte[] array) {
++    if (array.length > 0) {
++      recordConsumer.startField("array", 0);
++      for (byte element : array) {
++        recordConsumer.addInteger(element);
++      }
++      recordConsumer.endField("array", 0);
++    }
++  }
++
++  private void writeShortArray(short[] array) {
++    if (array.length > 0) {
++      recordConsumer.startField("array", 0);
++      for (short element : array) {
++        recordConsumer.addInteger(element);
++      }
++      recordConsumer.endField("array", 0);
++    }
++  }
++
++  private void writeCharArray(char[] array) {
++    if (array.length > 0) {
++      recordConsumer.startField("array", 0);
++      for (char element : array) {
++        recordConsumer.addInteger(element);
++      }
++      recordConsumer.endField("array", 0);
++    }
++  }
++
++  private void writeIntArray(int[] array) {
++    if (array.length > 0) {
++      recordConsumer.startField("array", 0);
++      for (int element : array) {
++        recordConsumer.addInteger(element);
++      }
++      recordConsumer.endField("array", 0);
++    }
++  }
++
++  private void writeLongArray(long[] array) {
++    if (array.length > 0) {
++      recordConsumer.startField("array", 0);
++      for (long element : array) {
++        recordConsumer.addLong(element);
++      }
++      recordConsumer.endField("array", 0);
++    }
++  }
++
++  private void writeFloatArray(float[] array) {
++    if (array.length > 0) {
++      recordConsumer.startField("array", 0);
++      for (float element : array) {
++        recordConsumer.addFloat(element);
++      }
++      recordConsumer.endField("array", 0);
++    }
++  }
++
++  private void writeDoubleArray(double[] array) {
++    if (array.length > 0) {
++      recordConsumer.startField("array", 0);
++      for (double element : array) {
++        recordConsumer.addDouble(element);
++      }
++      recordConsumer.endField("array", 0);
++    }
+   }
+ 
+   private <V> void writeMap(GroupType schema, Schema avroSchema,
+@@ -168,7 +349,7 @@ public class AvroWriteSupport extends WriteSupport<IndexedRecord> {
+ 
+     // ResolveUnion will tell us which of the union member types to
+     // deserialise.
+-    int avroIndex = GenericData.get().resolveUnion(avroSchema, value);
++    int avroIndex = model.resolveUnion(avroSchema, value);
+ 
+     // For parquet's schema we skip nulls
+     GroupType parquetGroup = parquetSchema.asGroupType();
+@@ -197,7 +378,11 @@ public class AvroWriteSupport extends WriteSupport<IndexedRecord> {
+     if (avroType.equals(Schema.Type.BOOLEAN)) {
+       recordConsumer.addBoolean((Boolean) value);
+     } else if (avroType.equals(Schema.Type.INT)) {
+-      recordConsumer.addInteger(((Number) value).intValue());
++      if (value instanceof Character) {
++        recordConsumer.addInteger((Character) value);
++      } else {
++        recordConsumer.addInteger(((Number) value).intValue());
++      }
+     } else if (avroType.equals(Schema.Type.LONG)) {
+       recordConsumer.addLong(((Number) value).longValue());
+     } else if (avroType.equals(Schema.Type.FLOAT)) {
+@@ -205,19 +390,23 @@ public class AvroWriteSupport extends WriteSupport<IndexedRecord> {
+     } else if (avroType.equals(Schema.Type.DOUBLE)) {
+       recordConsumer.addDouble(((Number) value).doubleValue());
+     } else if (avroType.equals(Schema.Type.BYTES)) {
+-      recordConsumer.addBinary(Binary.fromByteBuffer((ByteBuffer) value));
++      if (value instanceof byte[]) {
++        recordConsumer.addBinary(Binary.fromByteArray((byte[]) value));
++      } else {
++        recordConsumer.addBinary(Binary.fromByteBuffer((ByteBuffer) value));
++      }
+     } else if (avroType.equals(Schema.Type.STRING)) {
+       recordConsumer.addBinary(fromAvroString(value));
+     } else if (avroType.equals(Schema.Type.RECORD)) {
+-      writeRecord((GroupType) type, nonNullAvroSchema, (IndexedRecord) value);
++      writeRecord(type.asGroupType(), nonNullAvroSchema, value);
+     } else if (avroType.equals(Schema.Type.ENUM)) {
+       recordConsumer.addBinary(Binary.fromString(value.toString()));
+     } else if (avroType.equals(Schema.Type.ARRAY)) {
+-      writeArray((GroupType) type, nonNullAvroSchema, (Collection<?>) value);
++      writeArray(type.asGroupType(), nonNullAvroSchema, value);
+     } else if (avroType.equals(Schema.Type.MAP)) {
+-      writeMap((GroupType) type, nonNullAvroSchema, (Map<CharSequence, ?>) value);
++      writeMap(type.asGroupType(), nonNullAvroSchema, (Map<CharSequence, ?>) value);
+     } else if (avroType.equals(Schema.Type.UNION)) {
+-      writeUnion((GroupType) type, nonNullAvroSchema, value);
++      writeUnion(type.asGroupType(), nonNullAvroSchema, value);
+     } else if (avroType.equals(Schema.Type.FIXED)) {
+       recordConsumer.addBinary(Binary.fromByteArray(((GenericFixed) value).bytes()));
+     }
+@@ -231,4 +420,9 @@ public class AvroWriteSupport extends WriteSupport<IndexedRecord> {
+     return Binary.fromString(value.toString());
+   }
+ 
++  private static GenericData getDataModel(Configuration conf) {
++    Class<? extends AvroDataSupplier> suppClass = conf.getClass(
++        AVRO_DATA_SUPPLIER, SpecificDataSupplier.class, AvroDataSupplier.class);
++    return ReflectionUtils.newInstance(suppClass, conf).get();
++  }
+ }
+diff --git a/parquet-avro/src/main/java/parquet/avro/GenericDataSupplier.java b/parquet-avro/src/main/java/parquet/avro/GenericDataSupplier.java
+new file mode 100644
+index 0000000..4a53862
+--- /dev/null
++++ b/parquet-avro/src/main/java/parquet/avro/GenericDataSupplier.java
+@@ -0,0 +1,28 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *   http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing,
++ * software distributed under the License is distributed on an
++ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++ * KIND, either express or implied.  See the License for the
++ * specific language governing permissions and limitations
++ * under the License.
++ */
++package parquet.avro;
++
++import org.apache.avro.generic.GenericData;
++
++public class GenericDataSupplier implements AvroDataSupplier {
++  @Override
++  public GenericData get() {
++    return GenericData.get();
++  }
++}
+diff --git a/parquet-avro/src/main/java/parquet/avro/ParentValueContainer.java b/parquet-avro/src/main/java/parquet/avro/ParentValueContainer.java
+new file mode 100644
+index 0000000..6891b3d
+--- /dev/null
++++ b/parquet-avro/src/main/java/parquet/avro/ParentValueContainer.java
+@@ -0,0 +1,63 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *   http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing,
++ * software distributed under the License is distributed on an
++ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++ * KIND, either express or implied.  See the License for the
++ * specific language governing permissions and limitations
++ * under the License.
++ */
++package parquet.avro;
++
++abstract class ParentValueContainer {
++
++  /**
++   * Adds the value to the parent.
++   */
++  public void add(Object value) {
++    throw new RuntimeException(
++        "[BUG] ParentValueContainer#add was not overridden");
++  }
++
++  public void addBoolean(boolean value) {
++    add(value);
++  }
++
++  public void addByte(byte value) {
++    add(value);
++  }
++
++  public void addChar(char value) {
++    add(value);
++  }
++
++  public void addShort(short value) {
++    add(value);
++  }
++
++  public void addInt(int value) {
++    add(value);
++  }
++
++  public void addLong(long value) {
++    add(value);
++  }
++
++  public void addFloat(float value) {
++    add(value);
++  }
++
++  public void addDouble(double value) {
++    add(value);
++  }
++
++}
+diff --git a/parquet-avro/src/main/java/parquet/avro/ReflectDataSupplier.java b/parquet-avro/src/main/java/parquet/avro/ReflectDataSupplier.java
+new file mode 100644
+index 0000000..272f256
+--- /dev/null
++++ b/parquet-avro/src/main/java/parquet/avro/ReflectDataSupplier.java
+@@ -0,0 +1,29 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *   http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing,
++ * software distributed under the License is distributed on an
++ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++ * KIND, either express or implied.  See the License for the
++ * specific language governing permissions and limitations
++ * under the License.
++ */
++package parquet.avro;
++
++import org.apache.avro.generic.GenericData;
++import org.apache.avro.reflect.ReflectData;
++
++public class ReflectDataSupplier implements AvroDataSupplier {
++  @Override
++  public GenericData get() {
++    return ReflectData.get();
++  }
++}
+diff --git a/parquet-avro/src/test/java/parquet/avro/TestBackwardCompatibility.java b/parquet-avro/src/test/java/parquet/avro/TestBackwardCompatibility.java
+index 4e614b5..73c800e 100644
+--- a/parquet-avro/src/test/java/parquet/avro/TestBackwardCompatibility.java
++++ b/parquet-avro/src/test/java/parquet/avro/TestBackwardCompatibility.java
+@@ -30,7 +30,7 @@ import parquet.hadoop.ParquetReader;
+ public class TestBackwardCompatibility {
+ 
+   @Test
+-  public void testStringCompatibility() throws IOException {
++  public void testCompatStringCompatibility() throws IOException {
+     // some older versions of Parquet used avro.schema instead of
+     // parquet.avro.schema and didn't annotate binary with UTF8 when the type
+     // was converted from an Avro string. this validates that the old read
+@@ -48,4 +48,20 @@ public class TestBackwardCompatibility {
+     }
+   }
+ 
++  @Test
++  public void testStringCompatibility() throws IOException {
++    Path testFile = new Path(Resources.getResource("strings-2.parquet").getFile());
++    Configuration conf = new Configuration();
++    conf.setBoolean(AvroReadSupport.AVRO_COMPATIBILITY, false);
++    ParquetReader<GenericRecord> reader = AvroParquetReader
++        .builder(new AvroReadSupport<GenericRecord>(), testFile)
++        .withConf(conf)
++        .build();
++    GenericRecord r;
++    while ((r = reader.read()) != null) {
++      Assert.assertTrue("Should read value into a String",
++          r.get("text") instanceof String);
++    }
++  }
++
+ }
+diff --git a/parquet-avro/src/test/java/parquet/avro/TestReadWrite.java b/parquet-avro/src/test/java/parquet/avro/TestReadWrite.java
+index 7467378..f45f561 100644
+--- a/parquet-avro/src/test/java/parquet/avro/TestReadWrite.java
++++ b/parquet-avro/src/test/java/parquet/avro/TestReadWrite.java
+@@ -28,15 +28,15 @@ import java.util.*;
+ 
+ import org.apache.avro.Schema;
+ import org.apache.avro.generic.GenericData;
+-import org.apache.avro.generic.GenericData.Fixed;
+ import org.apache.avro.generic.GenericFixed;
+ import org.apache.avro.generic.GenericRecord;
+ import org.apache.avro.generic.GenericRecordBuilder;
+ import org.apache.avro.util.Utf8;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.Path;
+-import org.codehaus.jackson.node.NullNode;
+ import org.junit.Test;
++import org.junit.runner.RunWith;
++import org.junit.runners.Parameterized;
+ import parquet.hadoop.ParquetWriter;
+ import parquet.hadoop.api.WriteSupport;
+ import parquet.io.api.Binary;
+@@ -44,11 +44,27 @@ import parquet.io.api.RecordConsumer;
+ import parquet.schema.MessageTypeParser;
+ 
+ import static org.junit.Assert.assertEquals;
+-import static org.junit.Assert.assertArrayEquals;
+ import static org.junit.Assert.assertNotNull;
+ 
++@RunWith(Parameterized.class)
+ public class TestReadWrite {
+ 
++  @Parameterized.Parameters
++  public static Collection<Object[]> data() {
++    Object[][] data = new Object[][] {
++        { false },  // use the new converters
++        { true } }; // use the old converters
++    return Arrays.asList(data);
++  }
++
++  private final boolean compat;
++  private final Configuration testConf = new Configuration(false);
++
++  public TestReadWrite(boolean compat) {
++    this.compat = compat;
++    this.testConf.setBoolean(AvroReadSupport.AVRO_COMPATIBILITY, compat);
++  }
++
+   @Test
+   public void testEmptyArray() throws Exception {
+     Schema schema = new Schema.Parser().parse(
+@@ -59,7 +75,7 @@ public class TestReadWrite {
+     tmp.delete();
+     Path file = new Path(tmp.getPath());
+ 
+-    AvroParquetWriter<GenericRecord> writer = 
++    AvroParquetWriter<GenericRecord> writer =
+         new AvroParquetWriter<GenericRecord>(file, schema);
+ 
+     // Write a record with an empty array.
+@@ -69,7 +85,7 @@ public class TestReadWrite {
+     writer.write(record);
+     writer.close();
+ 
+-    AvroParquetReader<GenericRecord> reader = new AvroParquetReader<GenericRecord>(file);
++    AvroParquetReader<GenericRecord> reader = new AvroParquetReader<GenericRecord>(testConf, file);
+     GenericRecord nextRecord = reader.read();
+ 
+     assertNotNull(nextRecord);
+@@ -96,7 +112,7 @@ public class TestReadWrite {
+     writer.write(record);
+     writer.close();
+ 
+-    AvroParquetReader<GenericRecord> reader = new AvroParquetReader<GenericRecord>(file);
++    AvroParquetReader<GenericRecord> reader = new AvroParquetReader<GenericRecord>(testConf, file);
+     GenericRecord nextRecord = reader.read();
+ 
+     assertNotNull(nextRecord);
+@@ -127,7 +143,7 @@ public class TestReadWrite {
+     writer.write(record);
+     writer.close();
+ 
+-    AvroParquetReader<GenericRecord> reader = new AvroParquetReader<GenericRecord>(file);
++    AvroParquetReader<GenericRecord> reader = new AvroParquetReader<GenericRecord>(testConf, file);
+     GenericRecord nextRecord = reader.read();
+ 
+     assertNotNull(nextRecord);
+@@ -179,7 +195,7 @@ public class TestReadWrite {
+     writer.write(record);
+     writer.close();
+ 
+-    AvroParquetReader<GenericRecord> reader = new AvroParquetReader<GenericRecord>(file);
++    AvroParquetReader<GenericRecord> reader = new AvroParquetReader<GenericRecord>(testConf, file);
+     GenericRecord nextRecord = reader.read();
+ 
+     assertNotNull(nextRecord);
+@@ -235,9 +251,12 @@ public class TestReadWrite {
+     writer.write(record);
+     writer.close();
+ 
+-    AvroParquetReader<GenericRecord> reader = new AvroParquetReader<GenericRecord>(file);
++    AvroParquetReader<GenericRecord> reader = new AvroParquetReader<GenericRecord>(testConf, file);
+     GenericRecord nextRecord = reader.read();
+ 
++    Object expectedEnumSymbol = compat ? "a" :
++        new GenericData.EnumSymbol(schema.getField("myenum").schema(), "a");
++
+     assertNotNull(nextRecord);
+     assertEquals(null, nextRecord.get("mynull"));
+     assertEquals(true, nextRecord.get("myboolean"));
+@@ -247,7 +266,7 @@ public class TestReadWrite {
+     assertEquals(4.1, nextRecord.get("mydouble"));
+     assertEquals(ByteBuffer.wrap("hello".getBytes(Charsets.UTF_8)), nextRecord.get("mybytes"));
+     assertEquals("hello", nextRecord.get("mystring"));
+-    assertEquals("a", nextRecord.get("myenum"));
++    assertEquals(expectedEnumSymbol, nextRecord.get("myenum"));
+     assertEquals(nestedRecord, nextRecord.get("mynestedrecord"));
+     assertEquals(integerArray, nextRecord.get("myarray"));
+     assertEquals(emptyArray, nextRecord.get("myemptyarray"));
+@@ -437,7 +456,7 @@ public class TestReadWrite {
+     GenericFixed genericFixed = new GenericData.Fixed(
+         Schema.createFixed("fixed", null, null, 1), new byte[] { (byte) 65 });
+ 
+-    AvroParquetReader<GenericRecord> reader = new AvroParquetReader<GenericRecord>(file);
++    AvroParquetReader<GenericRecord> reader = new AvroParquetReader<GenericRecord>(testConf, file);
+     GenericRecord nextRecord = reader.read();
+     assertNotNull(nextRecord);
+     assertEquals(true, nextRecord.get("myboolean"));
+diff --git a/parquet-avro/src/test/java/parquet/avro/TestReflectInputOutputFormat.java b/parquet-avro/src/test/java/parquet/avro/TestReflectInputOutputFormat.java
+new file mode 100644
+index 0000000..8b5f614
+--- /dev/null
++++ b/parquet-avro/src/test/java/parquet/avro/TestReflectInputOutputFormat.java
+@@ -0,0 +1,492 @@
++/* 
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ * 
++ *   http://www.apache.org/licenses/LICENSE-2.0
++ * 
++ * Unless required by applicable law or agreed to in writing,
++ * software distributed under the License is distributed on an
++ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++ * KIND, either express or implied.  See the License for the
++ * specific language governing permissions and limitations
++ * under the License.
++ */
++package parquet.avro;
++
++import com.google.common.collect.Lists;
++import java.io.IOException;
++import java.util.Arrays;
++import java.util.List;
++import org.apache.avro.Schema;
++import org.apache.avro.reflect.Nullable;
++import org.apache.avro.reflect.ReflectData;
++import org.apache.avro.reflect.Union;
++import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.fs.FileSystem;
++import org.apache.hadoop.fs.Path;
++import org.apache.hadoop.io.LongWritable;
++import org.apache.hadoop.io.Text;
++import org.apache.hadoop.mapreduce.Job;
++import org.apache.hadoop.mapreduce.Mapper;
++import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;
++import parquet.Log;
++import parquet.column.ColumnReader;
++import parquet.filter.ColumnPredicates;
++import parquet.filter.ColumnRecordFilter;
++import parquet.filter.RecordFilter;
++import parquet.filter.UnboundRecordFilter;
++import org.junit.After;
++import org.junit.Before;
++import org.junit.Test;
++
++import static java.lang.Thread.sleep;
++import static org.junit.Assert.assertArrayEquals;
++import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertNull;
++import static org.junit.Assert.assertTrue;
++import static org.junit.Assert.fail;
++
++public class TestReflectInputOutputFormat {
++  private static final Log LOG = Log.getLog(TestReflectInputOutputFormat.class);
++
++
++  public static class Service {
++    private long date;
++    private String mechanic;
++
++    @Override
++    public boolean equals(Object o) {
++      if (this == o) return true;
++      if (o == null || getClass() != o.getClass()) return false;
++
++      Service service = (Service) o;
++
++      if (date != service.date) return false;
++      if (!mechanic.equals(service.mechanic)) return false;
++
++      return true;
++    }
++
++    @Override
++    public int hashCode() {
++      int result = (int) (date ^ (date >>> 32));
++      result = 31 * result + mechanic.hashCode();
++      return result;
++    }
++  }
++
++  public static enum EngineType {
++    DIESEL, PETROL, ELECTRIC
++  }
++
++  public static class Engine {
++    private EngineType type;
++    private float capacity;
++    private boolean hasTurboCharger;
++
++    @Override
++    public boolean equals(Object o) {
++      if (this == o) return true;
++      if (o == null || getClass() != o.getClass()) return false;
++
++      Engine engine = (Engine) o;
++
++      if (Float.compare(engine.capacity, capacity) != 0) return false;
++      if (hasTurboCharger != engine.hasTurboCharger) return false;
++      if (type != engine.type) return false;
++
++      return true;
++    }
++
++    @Override
++    public int hashCode() {
++      int result = type.hashCode();
++      result = 31 * result + (capacity != +0.0f ? Float.floatToIntBits(capacity) : 0);
++      result = 31 * result + (hasTurboCharger ? 1 : 0);
++      return result;
++    }
++  }
++
++  public static class Stereo extends Extra {
++    private String make;
++    private int speakers;
++
++    @Override
++    public boolean equals(Object o) {
++      if (this == o) return true;
++      if (o == null || getClass() != o.getClass()) return false;
++
++      Stereo stereo = (Stereo) o;
++
++      if (speakers != stereo.speakers) return false;
++      if (!make.equals(stereo.make)) return false;
++
++      return true;
++    }
++
++    @Override
++    public int hashCode() {
++      int result = make.hashCode();
++      result = 31 * result + speakers;
++      return result;
++    }
++  }
++
++  public static class LeatherTrim extends Extra {
++    private String colour;
++
++    @Override
++    public boolean equals(Object o) {
++      if (this == o) return true;
++      if (o == null || getClass() != o.getClass()) return false;
++
++      LeatherTrim that = (LeatherTrim) o;
++
++      if (!colour.equals(that.colour)) return false;
++
++      return true;
++    }
++
++    @Override
++    public int hashCode() {
++      return colour.hashCode();
++    }
++  }
++
++  @Union({Void.class, Stereo.class, LeatherTrim.class})
++  public static class Extra {}
++
++  public static class Car {
++    private long year;
++    private String registration;
++    private String make;
++    private String model;
++    private byte[] vin;
++    private int doors;
++    private Engine engine;
++    private Extra optionalExtra = null;
++    @Nullable
++    private List<Service> serviceHistory = null;
++
++    @Override
++    public boolean equals(Object o) {
++      if (this == o) return true;
++      if (o == null || getClass() != o.getClass()) return false;
++
++      Car car = (Car) o;
++
++      if (doors != car.doors) return false;
++      if (year != car.year) return false;
++      if (!engine.equals(car.engine)) return false;
++      if (!make.equals(car.make)) return false;
++      if (!model.equals(car.model)) return false;
++      if (optionalExtra != null ? !optionalExtra.equals(car.optionalExtra) : car.optionalExtra != null)
++        return false;
++      if (!registration.equals(car.registration)) return false;
++      if (serviceHistory != null ? !serviceHistory.equals(car.serviceHistory) : car.serviceHistory != null)
++        return false;
++      if (!Arrays.equals(vin, car.vin)) return false;
++
++      return true;
++    }
++
++    @Override
++    public int hashCode() {
++      int result = (int) (year ^ (year >>> 32));
++      result = 31 * result + registration.hashCode();
++      result = 31 * result + make.hashCode();
++      result = 31 * result + model.hashCode();
++      result = 31 * result + Arrays.hashCode(vin);
++      result = 31 * result + doors;
++      result = 31 * result + engine.hashCode();
++      result = 31 * result + (optionalExtra != null ? optionalExtra.hashCode() : 0);
++      result = 31 * result + (serviceHistory != null ? serviceHistory.hashCode() : 0);
++      return result;
++    }
++  }
++
++  public static class ShortCar {
++    @Nullable
++    private String make = null;
++    private Engine engine;
++    private long year;
++    private byte[] vin;
++
++    @Override
++    public boolean equals(Object o) {
++      if (this == o) return true;
++      if (o == null || getClass() != o.getClass()) return false;
++
++      ShortCar shortCar = (ShortCar) o;
++
++      if (year != shortCar.year) return false;
++      if (!engine.equals(shortCar.engine)) return false;
++      if (make != null ? !make.equals(shortCar.make) : shortCar.make != null)
++        return false;
++      if (!Arrays.equals(vin, shortCar.vin)) return false;
++
++      return true;
++    }
++
++    @Override
++    public int hashCode() {
++      int result = make != null ? make.hashCode() : 0;
++      result = 31 * result + engine.hashCode();
++      result = 31 * result + (int) (year ^ (year >>> 32));
++      result = 31 * result + Arrays.hashCode(vin);
++      return result;
++    }
++  }
++
++  public static final Schema CAR_SCHEMA = ReflectData.get()//AllowNulls.INSTANCE
++      .getSchema(Car.class);
++  public static final Schema SHORT_CAR_SCHEMA = ReflectData.get()//AllowNulls.INSTANCE
++      .getSchema(ShortCar.class);
++
++  public static Car nextRecord(int i) {
++    Car car = new Car();
++    car.doors = 2;
++    car.make = "Tesla";
++    car.model = String.format("Model X v%d", i % 2);
++    car.vin = String.format("1VXBR12EXCP%06d", i).getBytes();
++    car.year = 2014 + i;
++    car.registration = "California";
++
++    LeatherTrim trim = new LeatherTrim();
++    trim.colour = "black";
++    car.optionalExtra = trim;
++
++    Engine engine = new Engine();
++    engine.capacity = 85.0f;
++    engine.type = (i % 2) == 0 ? EngineType.ELECTRIC : EngineType.PETROL;
++    engine.hasTurboCharger = false;
++    car.engine = engine;
++
++    if (i % 4 == 0) {
++      Service service = new Service();
++      service.date = 1374084640;
++      service.mechanic = "Elon Musk";
++      car.serviceHistory = Lists.newArrayList();
++      car.serviceHistory.add(service);
++    }
++
++    return car;
++  }
++
++  public static class MyMapper extends Mapper<LongWritable, Text, Void, Car> {
++    @Override
++    public void run(Context context) throws IOException ,InterruptedException {
++      for (int i = 0; i < 10; i++) {
++        context.write(null, nextRecord(i));
++      }
++    }
++  }
++
++  public static class MyMapper2 extends Mapper<Void, Car, Void, Car> {
++    @Override
++    protected void map(Void key, Car car, Context context) throws IOException ,InterruptedException {
++      // Note: Car can be null because of predicate pushdown defined by an UnboundedRecordFilter (see below)
++      if (car != null) {
++        context.write(null, car);
++      }
++    }
++
++  }
++
++  public static class MyMapperShort extends
++      Mapper<Void, ShortCar, Void, ShortCar> {
++    @Override
++    protected void map(Void key, ShortCar car, Context context)
++        throws IOException, InterruptedException {
++      // Note: Car can be null because of predicate pushdown defined by an
++      // UnboundedRecordFilter (see below)
++      if (car != null) {
++        context.write(null, car);
++      }
++    }
++
++  }
++
++  public static class ElectricCarFilter implements UnboundRecordFilter {
++    private final UnboundRecordFilter filter;
++
++    public ElectricCarFilter() {
++      filter = ColumnRecordFilter.column("engine.type", ColumnPredicates.equalTo(parquet.avro.EngineType.ELECTRIC));
++    }
++
++    @Override
++    public RecordFilter bind(Iterable<ColumnReader> readers) {
++      return filter.bind(readers);
++    }
++  }
++
++  final Configuration conf = new Configuration();
++  final Path inputPath = new Path("src/test/java/parquet/avro/TestReflectInputOutputFormat.java");
++  final Path parquetPath = new Path("target/test/hadoop/TestReflectInputOutputFormat/parquet");
++  final Path outputPath = new Path("target/test/hadoop/TestReflectInputOutputFormat/out");
++
++  @Before
++  public void createParquetFile() throws Exception {
++    // set up readers and writers not in MR
++    conf.setBoolean(AvroReadSupport.AVRO_COMPATIBILITY, false);
++    AvroReadSupport.setAvroDataSupplier(conf, ReflectDataSupplier.class);
++    AvroWriteSupport.setAvroDataSupplier(conf, ReflectDataSupplier.class);
++
++    final FileSystem fileSystem = parquetPath.getFileSystem(conf);
++    fileSystem.delete(parquetPath, true);
++    fileSystem.delete(outputPath, true);
++    {
++      final Job job = new Job(conf, "write");
++
++      // input not really used
++      TextInputFormat.addInputPath(job, inputPath);
++      job.setInputFormatClass(TextInputFormat.class);
++
++      job.setMapperClass(TestReflectInputOutputFormat.MyMapper.class);
++      job.setNumReduceTasks(0);
++
++      job.setOutputFormatClass(AvroParquetOutputFormat.class);
++      AvroParquetOutputFormat.setOutputPath(job, parquetPath);
++      AvroParquetOutputFormat.setSchema(job, CAR_SCHEMA);
++      AvroParquetOutputFormat.setAvroDataSupplier(job, ReflectDataSupplier.class);
++
++      waitForJob(job);
++    }
++  }
++
++  @Test
++  public void testReadWrite() throws Exception {
++
++    conf.setBoolean(AvroReadSupport.AVRO_COMPATIBILITY, false);
++    final Job job = new Job(conf, "read");
++    job.setInputFormatClass(AvroParquetInputFormat.class);
++    AvroParquetInputFormat.setInputPaths(job, parquetPath);
++    // Test push-down predicates by using an electric car filter
++    AvroParquetInputFormat.setUnboundRecordFilter(job, ElectricCarFilter.class);
++
++    // Test schema projection by dropping the optional extras
++    Schema projection = Schema.createRecord(CAR_SCHEMA.getName(),
++        CAR_SCHEMA.getDoc(), CAR_SCHEMA.getNamespace(), false);
++    List<Schema.Field> fields = Lists.newArrayList();
++    for (Schema.Field field : ReflectData.get().getSchema(Car.class).getFields()) {
++      if (!"optionalExtra".equals(field.name())) {
++        fields.add(new Schema.Field(field.name(), field.schema(), field.doc(),
++            field.defaultValue(), field.order()));
++      }
++    }
++    projection.setFields(fields);
++    AvroParquetInputFormat.setRequestedProjection(job, projection);
++
++    job.setMapperClass(TestReflectInputOutputFormat.MyMapper2.class);
++    job.setNumReduceTasks(0);
++
++    job.setOutputFormatClass(AvroParquetOutputFormat.class);
++    AvroParquetOutputFormat.setOutputPath(job, outputPath);
++    AvroParquetOutputFormat.setSchema(job, CAR_SCHEMA);
++
++    waitForJob(job);
++
++    final Path mapperOutput = new Path(outputPath.toString(),
++        "part-m-00000.parquet");
++    final AvroParquetReader<Car> out = new AvroParquetReader<Car>(conf, mapperOutput);
++    Car car;
++    Car previousCar = null;
++    int lineNumber = 0;
++    while ((car = out.read()) != null) {
++      if (previousCar != null) {
++         // Testing reference equality here. The "model" field should be dictionary-encoded.
++         assertTrue(car.model == previousCar.model);
++      }
++      // Make sure that predicate push down worked as expected
++      if (car.engine.type == EngineType.PETROL) {
++        fail("UnboundRecordFilter failed to remove cars with PETROL engines");
++      }
++      // Note we use lineNumber * 2 because of predicate push down
++      Car expectedCar = nextRecord(lineNumber * 2);
++      // We removed the optional extra field using projection so we shouldn't
++      // see it here...
++      expectedCar.optionalExtra = null;
++      assertEquals("line " + lineNumber, expectedCar, car);
++      ++lineNumber;
++      previousCar = car;
++    }
++    out.close();
++  }
++
++  @Test
++  public void testReadWriteChangedCar() throws Exception {
++
++    conf.setBoolean(AvroReadSupport.AVRO_COMPATIBILITY, false);
++    final Job job = new Job(conf, "read changed/short");
++    job.setInputFormatClass(AvroParquetInputFormat.class);
++    AvroParquetInputFormat.setInputPaths(job, parquetPath);
++    // Test push-down predicates by using an electric car filter
++    AvroParquetInputFormat.setUnboundRecordFilter(job, ElectricCarFilter.class);
++
++    // Test schema projection by dropping the engine, year, and vin (like ShortCar),
++    // but making make optional (unlike ShortCar)
++    Schema projection = Schema.createRecord(CAR_SCHEMA.getName(),
++        CAR_SCHEMA.getDoc(), CAR_SCHEMA.getNamespace(), false);
++    List<Schema.Field> fields = Lists.newArrayList();
++    for (Schema.Field field : CAR_SCHEMA.getFields()) {
++      // No make!
++      if ("engine".equals(field.name()) || "year".equals(field.name()) || "vin".equals(field.name())) {
++        fields.add(new Schema.Field(field.name(), field.schema(), field.doc(),
++            field.defaultValue(), field.order()));
++      }
++    }
++    projection.setFields(fields);
++    AvroParquetInputFormat.setRequestedProjection(job, projection);
++    AvroParquetInputFormat.setAvroReadSchema(job, SHORT_CAR_SCHEMA);
++
++    job.setMapperClass(TestReflectInputOutputFormat.MyMapperShort.class);
++    job.setNumReduceTasks(0);
++
++    job.setOutputFormatClass(AvroParquetOutputFormat.class);
++    AvroParquetOutputFormat.setOutputPath(job, outputPath);
++    AvroParquetOutputFormat.setSchema(job, SHORT_CAR_SCHEMA);
++
++    waitForJob(job);
++
++    final Path mapperOutput = new Path(outputPath.toString(), "part-m-00000.parquet");
++    final AvroParquetReader<ShortCar> out = new AvroParquetReader<ShortCar>(conf, mapperOutput);
++    ShortCar car;
++    int lineNumber = 0;
++    while ((car = out.read()) != null) {
++      // Make sure that predicate push down worked as expected
++      // Note we use lineNumber * 2 because of predicate push down
++      Car expectedCar = nextRecord(lineNumber * 2);
++      // We removed the optional extra field using projection so we shouldn't see it here...
++      assertNull(car.make);
++      assertEquals(car.engine, expectedCar.engine);
++      assertEquals(car.year, expectedCar.year);
++      assertArrayEquals(car.vin, expectedCar.vin);
++      ++lineNumber;
++    }
++    out.close();
++  }
++
++  private void waitForJob(Job job) throws Exception {
++    job.submit();
++    while (!job.isComplete()) {
++      LOG.debug("waiting for job " + job.getJobName());
++      sleep(100);
++    }
++    LOG.info("status for job " + job.getJobName() + ": " + (job.isSuccessful() ? "SUCCESS" : "FAILURE"));
++    if (!job.isSuccessful()) {
++      throw new RuntimeException("job failed " + job.getJobName());
++    }
++  }
++
++  @After
++  public void deleteOutputFile() throws IOException {
++    final FileSystem fileSystem = parquetPath.getFileSystem(conf);
++    fileSystem.delete(parquetPath, true);
++    fileSystem.delete(outputPath, true);
++  }
++}
+diff --git a/parquet-avro/src/test/java/parquet/avro/TestReflectReadWrite.java b/parquet-avro/src/test/java/parquet/avro/TestReflectReadWrite.java
+new file mode 100644
+index 0000000..c5745f2
+--- /dev/null
++++ b/parquet-avro/src/test/java/parquet/avro/TestReflectReadWrite.java
+@@ -0,0 +1,217 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *   http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing,
++ * software distributed under the License is distributed on an
++ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++ * KIND, either express or implied.  See the License for the
++ * specific language governing permissions and limitations
++ * under the License.
++ */
++package parquet.avro;
++
++import com.google.common.collect.Lists;
++import java.io.File;
++import java.io.IOException;
++import java.nio.ByteBuffer;
++import java.util.Arrays;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import org.apache.avro.Schema;
++import org.apache.avro.generic.GenericData;
++import org.apache.avro.generic.GenericRecord;
++import org.apache.avro.reflect.ReflectData;
++import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.fs.Path;
++import parquet.hadoop.ParquetReader;
++import parquet.hadoop.ParquetWriter;
++import parquet.hadoop.metadata.CompressionCodecName;
++import org.junit.Test;
++import parquet.avro.GenericDataSupplier;
++import parquet.avro.ReflectDataSupplier;
++
++import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertNull;
++
++public class TestReflectReadWrite {
++
++  @Test
++  public void testReadWriteReflect() throws IOException {
++    Configuration conf = new Configuration(false);
++    conf.setBoolean(AvroReadSupport.AVRO_COMPATIBILITY, false);
++    AvroReadSupport.setAvroDataSupplier(conf, ReflectDataSupplier.class);
++
++    Path path = writePojosToParquetFile(10, CompressionCodecName.UNCOMPRESSED, false);
++    ParquetReader<Pojo> reader = new AvroParquetReader<Pojo>(conf, path);
++    Pojo object = getPojo();
++    for (int i = 0; i < 10; i++) {
++      assertEquals(object, reader.read());
++    }
++    assertNull(reader.read());
++  }
++
++  @Test
++  public void testWriteReflectReadGeneric() throws IOException {
++    Configuration conf = new Configuration(false);
++    conf.setBoolean(AvroReadSupport.AVRO_COMPATIBILITY, false);
++    AvroReadSupport.setAvroDataSupplier(conf, GenericDataSupplier.class);
++
++    Path path = writePojosToParquetFile(2, CompressionCodecName.UNCOMPRESSED, false);
++    ParquetReader<GenericRecord> reader = new AvroParquetReader<GenericRecord>(conf, path);
++    GenericRecord object = getGenericPojo();
++    for (int i = 0; i < 2; i += 1) {
++      assertEquals(object, reader.read());
++    }
++    assertNull(reader.read());
++  }
++
++  private GenericRecord getGenericPojo() {
++    Schema schema = ReflectData.get().getSchema(Pojo.class);
++    GenericData.Record record = new GenericData.Record(schema);
++    record.put("myboolean", true);
++    record.put("mybyte", 1);
++    record.put("myshort", 1);
++    record.put("myint", 1);
++    record.put("mylong", 2L);
++    record.put("myfloat", 3.1f);
++    record.put("mydouble", 4.1);
++    record.put("mybytes", ByteBuffer.wrap(new byte[] { 1, 2, 3, 4 }));
++    record.put("mystring", "Hello");
++    record.put("myenum", new GenericData.EnumSymbol(
++        schema.getField("myenum").schema(), "A"));
++    Map<String, String> map = new HashMap<String, String>();
++    map.put("a", "1");
++    map.put("b", "2");
++    record.put("mymap", map);
++    record.put("myshortarray", new GenericData.Array<Integer>(
++        schema.getField("myshortarray").schema(), Lists.newArrayList(1, 2)));
++    record.put("myintarray", new GenericData.Array<Integer>(
++        schema.getField("myintarray").schema(), Lists.newArrayList(1, 2)));
++    record.put("mystringarray", new GenericData.Array<String>(
++        schema.getField("mystringarray").schema(), Lists.newArrayList("a", "b")));
++    record.put("mylist", new GenericData.Array<String>(
++        schema.getField("mylist").schema(), Lists.newArrayList("a", "b", "c")));
++    return record;
++  }
++
++  private Pojo getPojo() {
++    Pojo object = new Pojo();
++    object.myboolean = true;
++    object.mybyte = 1;
++    object.myshort = 1;
++    object.myint = 1;
++    object.mylong = 2L;
++    object.myfloat = 3.1f;
++    object.mydouble = 4.1;
++    object.mybytes = new byte[] { 1, 2, 3, 4 };
++    object.mystring = "Hello";
++    object.myenum = E.A;
++    Map<String, String> map = new HashMap<String, String>();
++    map.put("a", "1");
++    map.put("b", "2");
++    object.mymap = map;
++    object.myshortarray = new short[] { 1, 2 };
++    object.myintarray = new int[] { 1, 2 };
++    object.mystringarray = new String[] { "a", "b" };
++    object.mylist = Lists.newArrayList("a", "b", "c");
++    return object;
++  }
++
++  private Path writePojosToParquetFile( int num, CompressionCodecName compression,
++                                        boolean enableDictionary) throws IOException {
++    File tmp = File.createTempFile(getClass().getSimpleName(), ".tmp");
++    tmp.deleteOnExit();
++    tmp.delete();
++    Path path = new Path(tmp.getPath());
++
++    Pojo object = getPojo();
++
++    Schema schema = ReflectData.get().getSchema(object.getClass());
++    ParquetWriter<Pojo> writer = AvroParquetWriter.<Pojo>builder(path)
++        .withSchema(schema)
++        .withCompressionCodec(compression)
++        .withDataModel(ReflectData.get())
++        .withDictionaryEncoding(enableDictionary)
++        .build();
++    for (int i = 0; i < num; i++) {
++      writer.write(object);
++    }
++    writer.close();
++    return path;
++  }
++
++  public static enum E {
++    A, B
++  }
++
++  public static class Pojo {
++    public boolean myboolean;
++    public byte mybyte;
++    public short myshort;
++    // no char until https://issues.apache.org/jira/browse/AVRO-1458 is fixed
++    public int myint;
++    public long mylong;
++    public float myfloat;
++    public double mydouble;
++    public byte[] mybytes;
++    public String mystring;
++    public E myenum;
++    private Map<String, String> mymap;
++    private short[] myshortarray;
++    private int[] myintarray;
++    private String[] mystringarray;
++    private List<String> mylist;
++
++    @Override
++    public boolean equals(Object o) {
++      if (!(o instanceof Pojo)) return false;
++      Pojo that = (Pojo) o;
++      return myboolean == that.myboolean
++          && mybyte == that.mybyte
++          && myshort == that.myshort
++          && myint == that.myint
++          && mylong == that.mylong
++          && myfloat == that.myfloat
++          && mydouble == that.mydouble
++          && Arrays.equals(mybytes, that.mybytes)
++          && mystring.equals(that.mystring)
++          && myenum == that.myenum
++          && mymap.equals(that.mymap)
++          && Arrays.equals(myshortarray, that.myshortarray)
++          && Arrays.equals(myintarray, that.myintarray)
++          && Arrays.equals(mystringarray, that.mystringarray)
++          && mylist.equals(that.mylist);
++    }
++
++    @Override
++    public String toString() {
++      return "Pojo{" +
++          "myboolean=" + myboolean +
++          ", mybyte=" + mybyte +
++          ", myshort=" + myshort +
++          ", myint=" + myint +
++          ", mylong=" + mylong +
++          ", myfloat=" + myfloat +
++          ", mydouble=" + mydouble +
++          ", mybytes=" + Arrays.toString(mybytes) +
++          ", mystring='" + mystring + '\'' +
++          ", myenum=" + myenum +
++          ", mymap=" + mymap +
++          ", myshortarray=" + Arrays.toString(myshortarray) +
++          ", myintarray=" + Arrays.toString(myintarray) +
++          ", mystringarray=" + Arrays.toString(mystringarray) +
++          ", mylist=" + mylist +
++          '}';
++    }
++  }
++
++}
+diff --git a/parquet-avro/src/test/java/parquet/avro/TestSpecificReadWrite.java b/parquet-avro/src/test/java/parquet/avro/TestSpecificReadWrite.java
+index 6e29dfb..c1c7627 100644
+--- a/parquet-avro/src/test/java/parquet/avro/TestSpecificReadWrite.java
++++ b/parquet-avro/src/test/java/parquet/avro/TestSpecificReadWrite.java
+@@ -29,11 +29,15 @@ import com.google.common.collect.ImmutableList;
+ import java.io.File;
+ import java.io.IOException;
+ import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.Collection;
+ import java.util.List;
+ import org.apache.avro.Schema;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.Path;
+ import org.junit.Test;
++import org.junit.runner.RunWith;
++import org.junit.runners.Parameterized;
+ import parquet.hadoop.ParquetReader;
+ import parquet.hadoop.ParquetWriter;
+ import parquet.hadoop.metadata.CompressionCodecName;
+@@ -42,12 +46,27 @@ import parquet.hadoop.metadata.CompressionCodecName;
+  * Other tests exercise the use of Avro Generic, a dynamic data representation. This class focuses
+  * on Avro Speific whose schemas are pre-compiled to POJOs with built in SerDe for faster serialization.
+  */
++@RunWith(Parameterized.class)
+ public class TestSpecificReadWrite {
+ 
++  @Parameterized.Parameters
++  public static Collection<Object[]> data() {
++    Object[][] data = new Object[][] {
++        { false },  // use the new converters
++        { true } }; // use the old converters
++    return Arrays.asList(data);
++  }
++
++  private final Configuration testConf = new Configuration(false);
++
++  public TestSpecificReadWrite(boolean compat) {
++    this.testConf.setBoolean(AvroReadSupport.AVRO_COMPATIBILITY, compat);
++  }
++
+   @Test
+-  public void testReadWriteSpecific() throws IOException {
++  public void testCompatReadWriteSpecific() throws IOException {
+     Path path = writeCarsToParquetFile(10, CompressionCodecName.UNCOMPRESSED, false);
+-    ParquetReader<Car> reader = new AvroParquetReader<Car>(path);
++    ParquetReader<Car> reader = new AvroParquetReader<Car>(testConf, path);
+     for (int i = 0; i < 10; i++) {
+       assertEquals(getVwPolo().toString(), reader.read().toString());
+       assertEquals(getVwPassat().toString(), reader.read().toString());
+@@ -59,7 +78,7 @@ public class TestSpecificReadWrite {
+   @Test
+   public void testReadWriteSpecificWithDictionary() throws IOException {
+     Path path = writeCarsToParquetFile(10, CompressionCodecName.UNCOMPRESSED, true);
+-    ParquetReader<Car> reader = new AvroParquetReader<Car>(path);
++    ParquetReader<Car> reader = new AvroParquetReader<Car>(testConf, path);
+     for (int i = 0; i < 10; i++) {
+       assertEquals(getVwPolo().toString(), reader.read().toString());
+       assertEquals(getVwPassat().toString(), reader.read().toString());
+@@ -71,7 +90,7 @@ public class TestSpecificReadWrite {
+   @Test
+   public void testFilterMatchesMultiple() throws IOException {
+     Path path = writeCarsToParquetFile(10, CompressionCodecName.UNCOMPRESSED, false);
+-    ParquetReader<Car> reader = new AvroParquetReader<Car>(path, column("make", equalTo("Volkswagen")));
++    ParquetReader<Car> reader = new AvroParquetReader<Car>(testConf, path, column("make", equalTo("Volkswagen")));
+     for (int i = 0; i < 10; i++) {
+       assertEquals(getVwPolo().toString(), reader.read().toString());
+       assertEquals(getVwPassat().toString(), reader.read().toString());
+@@ -82,7 +101,7 @@ public class TestSpecificReadWrite {
+   @Test
+   public void testFilterMatchesMultipleBlocks() throws IOException {
+     Path path = writeCarsToParquetFile(10000, CompressionCodecName.UNCOMPRESSED, false, DEFAULT_BLOCK_SIZE/64, DEFAULT_PAGE_SIZE/64);
+-    ParquetReader<Car> reader = new AvroParquetReader<Car>(path, column("make", equalTo("Volkswagen")));
++    ParquetReader<Car> reader = new AvroParquetReader<Car>(testConf, path, column("make", equalTo("Volkswagen")));
+     for (int i = 0; i < 10000; i++) {
+       assertEquals(getVwPolo().toString(), reader.read().toString());
+       assertEquals(getVwPassat().toString(), reader.read().toString());
+@@ -93,7 +112,7 @@ public class TestSpecificReadWrite {
+   @Test
+   public void testFilterMatchesNoBlocks() throws IOException {
+     Path path = writeCarsToParquetFile(10000, CompressionCodecName.UNCOMPRESSED, false, DEFAULT_BLOCK_SIZE/64, DEFAULT_PAGE_SIZE/64);
+-    ParquetReader<Car> reader = new AvroParquetReader<Car>(path, column("make", equalTo("Bogus")));
++    ParquetReader<Car> reader = new AvroParquetReader<Car>(testConf, path, column("make", equalTo("Bogus")));
+     assertNull(reader.read());
+   }
+ 
+@@ -119,7 +138,7 @@ public class TestSpecificReadWrite {
+     writer.write(bmwMini); // only write BMW in last block
+     writer.close();
+ 
+-    ParquetReader<Car> reader = new AvroParquetReader<Car>(path, column("make",
++    ParquetReader<Car> reader = new AvroParquetReader<Car>(testConf, path, column("make",
+         equalTo("BMW")));
+     assertEquals(getBmwMini().toString(), reader.read().toString());
+     assertNull(reader.read());
+@@ -128,7 +147,7 @@ public class TestSpecificReadWrite {
+   @Test
+   public void testFilterWithDictionary() throws IOException {
+     Path path = writeCarsToParquetFile(1,CompressionCodecName.UNCOMPRESSED,true);
+-    ParquetReader<Car> reader = new AvroParquetReader<Car>(path, column("make", equalTo("Volkswagen")));
++    ParquetReader<Car> reader = new AvroParquetReader<Car>(testConf, path, column("make", equalTo("Volkswagen")));
+     assertEquals(getVwPolo().toString(), reader.read().toString());
+     assertEquals(getVwPassat().toString(), reader.read().toString());
+     assertNull(reader.read());
+@@ -138,15 +157,15 @@ public class TestSpecificReadWrite {
+   public void testFilterOnSubAttribute() throws IOException {
+     Path path = writeCarsToParquetFile(1, CompressionCodecName.UNCOMPRESSED, false);
+     
+-    ParquetReader<Car> reader = new AvroParquetReader<Car>(path, column("engine.type", equalTo(EngineType.DIESEL)));
++    ParquetReader<Car> reader = new AvroParquetReader<Car>(testConf, path, column("engine.type", equalTo(EngineType.DIESEL)));
+     assertEquals(reader.read().toString(), getVwPassat().toString());
+     assertNull(reader.read());
+ 
+-    reader = new AvroParquetReader<Car>(path, column("engine.capacity", equalTo(1.4f)));
++    reader = new AvroParquetReader<Car>(testConf, path, column("engine.capacity", equalTo(1.4f)));
+     assertEquals(getVwPolo().toString(), reader.read().toString());
+     assertNull(reader.read());
+ 
+-    reader = new AvroParquetReader<Car>(path, column("engine.hasTurboCharger", equalTo(true)));
++    reader = new AvroParquetReader<Car>(testConf, path, column("engine.hasTurboCharger", equalTo(true)));
+     assertEquals(getBmwMini().toString(), reader.read().toString());
+     assertNull(reader.read());
+   }
+@@ -154,7 +173,7 @@ public class TestSpecificReadWrite {
+   @Test
+   public void testProjection() throws IOException {
+     Path path = writeCarsToParquetFile(1, CompressionCodecName.UNCOMPRESSED, false);
+-    Configuration conf = new Configuration();
++    Configuration conf = new Configuration(testConf);
+ 
+     Schema schema = Car.getClassSchema();
+     List<Schema.Field> fields = schema.getFields();
+@@ -193,7 +212,7 @@ public class TestSpecificReadWrite {
+   @Test
+   public void testAvroReadSchema() throws IOException {
+     Path path = writeCarsToParquetFile(1, CompressionCodecName.UNCOMPRESSED, false);
+-    Configuration conf = new Configuration();
++    Configuration conf = new Configuration(testConf);
+     AvroReadSupport.setAvroReadSchema(conf, NewCar.SCHEMA$);
+ 
+     ParquetReader<NewCar> reader = new AvroParquetReader<NewCar>(conf, path);
+diff --git a/parquet-column/pom.xml b/parquet-column/pom.xml
+index 41992b3..de4f063 100644
+--- a/parquet-column/pom.xml
++++ b/parquet-column/pom.xml
+@@ -62,7 +62,7 @@
+     <dependency>
+       <groupId>it.unimi.dsi</groupId>
+       <artifactId>fastutil</artifactId>
+-      <version>6.5.7</version>
++      <version>${fastutil.version}</version>
+     </dependency>
+ 
+     <dependency>
+diff --git a/pom.xml b/pom.xml
+index 7529b45..ec7b488 100644
+--- a/pom.xml
++++ b/pom.xml
+@@ -153,6 +153,7 @@
+     <scala.version>2.10.4</scala.version>
+     <!-- scala.binary.version is used for projects that fetch dependencies that are in scala -->
+     <scala.binary.version>2.10</scala.binary.version>
++    <fastutil.version>6.5.7</fastutil.version>
+   </properties>
+ 
+   <modules>
+-- 
+1.7.9.5
+

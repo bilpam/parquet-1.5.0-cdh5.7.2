@@ -1,0 +1,203 @@
+From c7e44e98989331041b5c3823339d44e68d9a0b05 Mon Sep 17 00:00:00 2001
+From: Tianshuo Deng <tdeng@twitter.com>
+Date: Fri, 15 May 2015 13:07:14 -0700
+Subject: [PATCH 117/176] PARQUET-278 : enforce non empty group on MessageType
+ level
+
+As columnar format, parquet currently does not support empty struct/group without leaves. We should throw when constructing an empty GroupType to give a clear message.
+
+Author: Tianshuo Deng <tdeng@twitter.com>
+
+Closes #195 from tsdeng/message_type_enforce_non_empty_group and squashes the following commits:
+
+a286c58 [Tianshuo Deng] revert change to merge_parquet_pr
+a09f6ba [Tianshuo Deng] fix test
+ac63567 [Tianshuo Deng] fix tests
+aa2633c [Tianshuo Deng] enforce non empty group on MessageType level
+
+Conflicts:
+	parquet-thrift/src/main/java/parquet/thrift/ThriftSchemaConverter.java
+Resolution:
+    Fixed Pig test imports
+    Thrift schema converter: conflict with removed assertion because
+      PARQUET-162 was not backported. also fixed a test removed in
+      PARQUET-162: the filter works, but selects an empty group.
+---
+ .../src/main/java/parquet/schema/GroupType.java    |    3 ++
+ .../IncompatibleSchemaModificationException.java   |    6 ++--
+ .../parquet/schema/InvalidSchemaException.java     |   31 ++++++++++++++++++++
+ .../test/java/parquet/schema/TestMessageType.java  |   14 +++++++++
+ .../java/parquet/pig/TestPigSchemaConverter.java   |    7 ++++-
+ .../java/parquet/thrift/ThriftSchemaConverter.java |    2 +-
+ .../TestParquetToThriftReadWriteAndProjection.java |    4 ++-
+ 7 files changed, 61 insertions(+), 6 deletions(-)
+ create mode 100644 parquet-column/src/main/java/parquet/schema/InvalidSchemaException.java
+
+diff --git a/parquet-column/src/main/java/parquet/schema/GroupType.java b/parquet-column/src/main/java/parquet/schema/GroupType.java
+index 2636b47..dde41d0 100644
+--- a/parquet-column/src/main/java/parquet/schema/GroupType.java
++++ b/parquet-column/src/main/java/parquet/schema/GroupType.java
+@@ -88,6 +88,9 @@ public class GroupType extends Type {
+    */
+   GroupType(Repetition repetition, String name, OriginalType originalType, List<Type> fields, ID id) {
+     super(name, repetition, originalType, id);
++    if (fields.isEmpty()) {
++      throw new InvalidSchemaException("A group type can not be empty. Parquet does not support empty group without leaves. Empty group: " + name);
++    }
+     this.fields = fields;
+     this.indexByName = new HashMap<String, Integer>();
+     for (int i = 0; i < fields.size(); i++) {
+diff --git a/parquet-column/src/main/java/parquet/schema/IncompatibleSchemaModificationException.java b/parquet-column/src/main/java/parquet/schema/IncompatibleSchemaModificationException.java
+index 4933294..b0ce630 100644
+--- a/parquet-column/src/main/java/parquet/schema/IncompatibleSchemaModificationException.java
++++ b/parquet-column/src/main/java/parquet/schema/IncompatibleSchemaModificationException.java
+@@ -1,4 +1,4 @@
+-/* 
++/*
+  * Licensed to the Apache Software Foundation (ASF) under one
+  * or more contributor license agreements.  See the NOTICE file
+  * distributed with this work for additional information
+@@ -6,9 +6,9 @@
+  * to you under the Apache License, Version 2.0 (the
+  * "License"); you may not use this file except in compliance
+  * with the License.  You may obtain a copy of the License at
+- * 
++ *
+  *   http://www.apache.org/licenses/LICENSE-2.0
+- * 
++ *
+  * Unless required by applicable law or agreed to in writing,
+  * software distributed under the License is distributed on an
+  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+diff --git a/parquet-column/src/main/java/parquet/schema/InvalidSchemaException.java b/parquet-column/src/main/java/parquet/schema/InvalidSchemaException.java
+new file mode 100644
+index 0000000..f6ed6df
+--- /dev/null
++++ b/parquet-column/src/main/java/parquet/schema/InvalidSchemaException.java
+@@ -0,0 +1,31 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *   http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing,
++ * software distributed under the License is distributed on an
++ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++ * KIND, either express or implied.  See the License for the
++ * specific language governing permissions and limitations
++ * under the License.
++ */
++package parquet.schema;
++
++import parquet.ParquetRuntimeException;
++
++public class InvalidSchemaException extends ParquetRuntimeException {
++  public InvalidSchemaException(String message, Throwable cause) {
++    super(message, cause);
++  }
++
++  public InvalidSchemaException(String message) {
++    super(message);
++  }
++}
+diff --git a/parquet-column/src/test/java/parquet/schema/TestMessageType.java b/parquet-column/src/test/java/parquet/schema/TestMessageType.java
+index 2374f1f..f602b85 100644
+--- a/parquet-column/src/test/java/parquet/schema/TestMessageType.java
++++ b/parquet-column/src/test/java/parquet/schema/TestMessageType.java
+@@ -145,4 +145,18 @@ public class TestMessageType {
+     assertEquals(schema, schema2);
+     assertEquals(schema.toString(), schema2.toString());
+   }
++
++  @Test
++  public void testEmptyGroup() {
++    try {
++      MessageType t5 = new MessageType("root1",
++          new GroupType(REQUIRED, "g1"),
++          new GroupType(REQUIRED, "g2",
++              new PrimitiveType(OPTIONAL, BINARY, "b")));
++      fail("should throw InvalidSchemaException when GroupType contains no child");
++    } catch (InvalidSchemaException e) {
++      assertEquals("A group type can not be empty. Parquet does not support empty group without leaves. Empty group: g1", e.getMessage());
++    }
++  }
++
+ }
+diff --git a/parquet-pig/src/test/java/parquet/pig/TestPigSchemaConverter.java b/parquet-pig/src/test/java/parquet/pig/TestPigSchemaConverter.java
+index e365572..66cbb1e 100644
+--- a/parquet-pig/src/test/java/parquet/pig/TestPigSchemaConverter.java
++++ b/parquet-pig/src/test/java/parquet/pig/TestPigSchemaConverter.java
+@@ -18,6 +18,8 @@
+  */
+ package parquet.pig;
+ 
++import static parquet.schema.PrimitiveType.PrimitiveTypeName.*;
++import static parquet.schema.Type.Repetition.OPTIONAL;
+ import static org.junit.Assert.assertEquals;
+ import static parquet.pig.PigSchemaConverter.pigSchemaToString;
+ import static parquet.pig.TupleReadSupport.getPigSchemaFromMultipleFiles;
+@@ -30,6 +32,9 @@ import java.util.LinkedHashSet;
+ import java.util.Map;
+ import java.util.Set;
+ 
++import parquet.schema.PrimitiveType;
++import parquet.schema.PrimitiveType.PrimitiveTypeName;
++import parquet.schema.Type;
+ import org.apache.pig.impl.logicalLayer.schema.Schema;
+ import org.apache.pig.impl.util.Utils;
+ import org.junit.Ignore;
+@@ -224,7 +229,7 @@ public class TestPigSchemaConverter {
+     map.put("pig.schema", new LinkedHashSet<String>(Arrays.asList(
+         "a:int, b:int, c:int, d:int, e:int, f:int",
+         "aa:int, aaa:int, b:int, c:int, ee:int")));
+-    Schema result = getPigSchemaFromMultipleFiles(new MessageType("empty"), map);
++    Schema result = getPigSchemaFromMultipleFiles(new MessageType("file_schema", new PrimitiveType(OPTIONAL, INT32,"a")), map);
+     assertEquals("a: int,b: int,c: int,d: int,e: int,f: int,aa: int,aaa: int,ee: int", pigSchemaToString(result));
+   }
+ 
+diff --git a/parquet-thrift/src/main/java/parquet/thrift/ThriftSchemaConverter.java b/parquet-thrift/src/main/java/parquet/thrift/ThriftSchemaConverter.java
+index 9cd1dcd..8e29057 100644
+--- a/parquet-thrift/src/main/java/parquet/thrift/ThriftSchemaConverter.java
++++ b/parquet-thrift/src/main/java/parquet/thrift/ThriftSchemaConverter.java
+@@ -62,9 +62,9 @@ public class ThriftSchemaConverter {
+   public MessageType convert(StructType thriftClass) {
+     ThriftSchemaConvertVisitor visitor = new ThriftSchemaConvertVisitor(fieldProjectionFilter);
+     thriftClass.accept(visitor);
+-    MessageType convertedMessageType = visitor.getConvertedMessageType();
+     // This introduces a behavior change that is not backported, PARQUET-162
+     // fieldProjectionFilter.assertNoUnmatchedPatterns();
++    MessageType convertedMessageType = visitor.getConvertedMessageType();
+     return convertedMessageType;
+   }
+ 
+diff --git a/parquet-thrift/src/test/java/parquet/hadoop/thrift/TestParquetToThriftReadWriteAndProjection.java b/parquet-thrift/src/test/java/parquet/hadoop/thrift/TestParquetToThriftReadWriteAndProjection.java
+index 196d989..d012ce1 100644
+--- a/parquet-thrift/src/test/java/parquet/hadoop/thrift/TestParquetToThriftReadWriteAndProjection.java
++++ b/parquet-thrift/src/test/java/parquet/hadoop/thrift/TestParquetToThriftReadWriteAndProjection.java
+@@ -49,6 +49,7 @@ import com.twitter.data.proto.tutorial.thrift.AddressBook;
+ import com.twitter.data.proto.tutorial.thrift.Name;
+ import com.twitter.data.proto.tutorial.thrift.Person;
+ import com.twitter.data.proto.tutorial.thrift.PhoneNumber;
++import parquet.schema.InvalidSchemaException;
+ import parquet.thrift.test.*;
+ 
+ public class TestParquetToThriftReadWriteAndProjection {
+@@ -120,7 +121,8 @@ public class TestParquetToThriftReadWriteAndProjection {
+     shouldDoProjectionWithThriftColumnFilter(projectionFilter,toWrite,toWrite,StructWithReorderedOptionalFields.class);
+   }
+ 
+-  @Test
++  // The selected group cannot be materialized, but the projection still passes
++  @Test(expected=InvalidSchemaException.class)
+   public void testNotPullInOptionalFields() throws Exception {
+     final String projectionFilterDesc = "nomatch";
+     TBase toWrite=new AddressBook(
+-- 
+1.7.9.5
+

@@ -1,0 +1,34 @@
+From d935c0208370ddb57ad7a827467fcbfb2709dd29 Mon Sep 17 00:00:00 2001
+From: Cheng Lian <lian@databricks.com>
+Date: Fri, 15 May 2015 12:40:27 -0700
+Subject: [PATCH 114/176] PARQUET-254: Fixes exception message
+
+<!-- Reviewable:start -->
+[<img src="https://reviewable.io/review_button.png" height=40 alt="Review on Reviewable"/>](https://reviewable.io/reviews/apache/incubator-parquet-mr/174)
+<!-- Reviewable:end -->
+
+Author: Cheng Lian <lian@databricks.com>
+
+Closes #174 from liancheng/fix-exception-message and squashes the following commits:
+
+db816c2 [Cheng Lian] Fixes exception message
+---
+ .../java/parquet/avro/AvroSchemaConverter.java     |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/parquet-avro/src/main/java/parquet/avro/AvroSchemaConverter.java b/parquet-avro/src/main/java/parquet/avro/AvroSchemaConverter.java
+index 80946f3..28b3184 100644
+--- a/parquet-avro/src/main/java/parquet/avro/AvroSchemaConverter.java
++++ b/parquet-avro/src/main/java/parquet/avro/AvroSchemaConverter.java
+@@ -237,7 +237,7 @@ public class AvroSchemaConverter {
+             }
+             @Override
+             public Schema convertINT96(PrimitiveTypeName primitiveTypeName) {
+-              throw new IllegalArgumentException("INT64 not yet implemented.");
++              throw new IllegalArgumentException("INT96 not yet implemented.");
+             }
+             @Override
+             public Schema convertFLOAT(PrimitiveTypeName primitiveTypeName) {
+-- 
+1.7.9.5
+

@@ -1,0 +1,259 @@
+From c8f55d29b283bd3584a8be980747d7cb62fd62f5 Mon Sep 17 00:00:00 2001
+From: Ryan Blue <blue@apache.org>
+Date: Thu, 22 Oct 2015 14:30:01 -0700
+Subject: [PATCH 172/176] CLOUDERA-BUILD. Add commit-flow scripts.
+
+---
+ cloudera/env.sh              |   40 ++++++++++++++++++++
+ cloudera/git-ssh.sh          |   21 +++++++++++
+ cloudera/post_commit_hook.sh |   28 ++++++++++++++
+ cloudera/pre_commit_hook.sh  |   33 ++++++++++++++++
+ cloudera/validate.sh         |   86 ++++++++++++++++++++++++++++++++++++++++++
+ 5 files changed, 208 insertions(+)
+ create mode 100644 cloudera/env.sh
+ create mode 100755 cloudera/git-ssh.sh
+ create mode 100644 cloudera/post_commit_hook.sh
+ create mode 100644 cloudera/pre_commit_hook.sh
+ create mode 100644 cloudera/validate.sh
+
+diff --git a/cloudera/env.sh b/cloudera/env.sh
+new file mode 100644
+index 0000000..18066bb
+--- /dev/null
++++ b/cloudera/env.sh
+@@ -0,0 +1,40 @@
++#!/bin/bash
++#
++# Licensed to the Apache Software Foundation (ASF) under one
++# or more contributor license agreements.  See the NOTICE file
++# distributed with this work for additional information
++# regarding copyright ownership.  The ASF licenses this file
++# to you under the Apache License, Version 2.0 (the
++# "License"); you may not use this file except in compliance
++# with the License.  You may obtain a copy of the License at
++#
++#   http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing,
++# software distributed under the License is distributed on an
++# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++# KIND, either express or implied.  See the License for the
++# specific language governing permissions and limitations
++# under the License.
++#
++
++#
++# This file is sourced before running pre_commit_hook.sh and
++# post_commit_hook.sh to allow setting up the environment in which those
++# scripts run. To set an environment variable for those scripts, must export
++# it.
++#
++
++export TOOLS_REPO_URI="git@github.mtv.cloudera.com:parquet/parquet.git"
++export TOOLS_BRANCH="tools-cdh5-1.5.0"
++export PROJECT_REPO_URI="git@github.mtv.cloudera.com:CDH/parquet.git"
++export JAVA7_BUILD=true
++
++pushd /opt/toolchain > /dev/null
++source /opt/toolchain/toolchain.sh
++popd > /dev/null
++
++# setup thrift and protoc
++THRIFT_HOME=/opt/toolchain/thrift-0.9.0
++export PATH=$THRIFT_HOME/bin:/opt/toolchain/protobuf-2.5.0/bin:$PATH
++
+diff --git a/cloudera/git-ssh.sh b/cloudera/git-ssh.sh
+new file mode 100755
+index 0000000..9959267
+--- /dev/null
++++ b/cloudera/git-ssh.sh
+@@ -0,0 +1,21 @@
++#!/bin/bash
++#
++# Licensed to the Apache Software Foundation (ASF) under one
++# or more contributor license agreements.  See the NOTICE file
++# distributed with this work for additional information
++# regarding copyright ownership.  The ASF licenses this file
++# to you under the Apache License, Version 2.0 (the
++# "License"); you may not use this file except in compliance
++# with the License.  You may obtain a copy of the License at
++#
++#   http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing,
++# software distributed under the License is distributed on an
++# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++# KIND, either express or implied.  See the License for the
++# specific language governing permissions and limitations
++# under the License.
++#
++
++exec /usr/bin/ssh -o StrictHostKeyChecking=no "$@"
+diff --git a/cloudera/post_commit_hook.sh b/cloudera/post_commit_hook.sh
+new file mode 100644
+index 0000000..9f91842
+--- /dev/null
++++ b/cloudera/post_commit_hook.sh
+@@ -0,0 +1,28 @@
++#!/bin/bash
++#
++# Licensed to the Apache Software Foundation (ASF) under one
++# or more contributor license agreements.  See the NOTICE file
++# distributed with this work for additional information
++# regarding copyright ownership.  The ASF licenses this file
++# to you under the Apache License, Version 2.0 (the
++# "License"); you may not use this file except in compliance
++# with the License.  You may obtain a copy of the License at
++#
++#   http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing,
++# software distributed under the License is distributed on an
++# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++# KIND, either express or implied.  See the License for the
++# specific language governing permissions and limitations
++# under the License.
++#
++
++source cloudera/tools/common.sh
++
++# mbuild || die 1 "Build failed!"
++
++# unit tests are run in the pre-commit job
++
++
++exit 0
+diff --git a/cloudera/pre_commit_hook.sh b/cloudera/pre_commit_hook.sh
+new file mode 100644
+index 0000000..2bc594d
+--- /dev/null
++++ b/cloudera/pre_commit_hook.sh
+@@ -0,0 +1,33 @@
++#!/bin/bash
++#
++# Licensed to the Apache Software Foundation (ASF) under one
++# or more contributor license agreements.  See the NOTICE file
++# distributed with this work for additional information
++# regarding copyright ownership.  The ASF licenses this file
++# to you under the Apache License, Version 2.0 (the
++# "License"); you may not use this file except in compliance
++# with the License.  You may obtain a copy of the License at
++#
++#   http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing,
++# software distributed under the License is distributed on an
++# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++# KIND, either express or implied.  See the License for the
++# specific language governing permissions and limitations
++# under the License.
++#
++
++source cloudera/tools/common.sh
++
++echo
++echo "Building project . . ."
++echo
++mbuild || die 1 "Build failed!"
++
++echo
++echo "Running unit tests . . ."
++echo
++mtest > /tmp/test-output.text 2>&1 || (cat /tmp/test-output.text && die 1 "Tests failed!")
++
++exit 0
+diff --git a/cloudera/validate.sh b/cloudera/validate.sh
+new file mode 100644
+index 0000000..69bef7f
+--- /dev/null
++++ b/cloudera/validate.sh
+@@ -0,0 +1,86 @@
++#!/bin/bash
++#
++# Licensed to the Apache Software Foundation (ASF) under one
++# or more contributor license agreements.  See the NOTICE file
++# distributed with this work for additional information
++# regarding copyright ownership.  The ASF licenses this file
++# to you under the Apache License, Version 2.0 (the
++# "License"); you may not use this file except in compliance
++# with the License.  You may obtain a copy of the License at
++#
++#   http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing,
++# software distributed under the License is distributed on an
++# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++# KIND, either express or implied.  See the License for the
++# specific language governing permissions and limitations
++# under the License.
++#
++
++function exists() {
++  git ls-remote --heads "$1" | grep -q "$2" > /dev/null 2>&1
++}
++
++pushd `dirname $0` > /dev/null
++here=`pwd`
++popd > /dev/null 2>&1
++
++source $here/env.sh
++
++export GIT_SSH=$here/git-ssh.sh
++
++if [ -z "$TOOLS_REPO_URI" ]; then
++  echo "Failed to bootstrap commit-flow: \$TOOLS_REPO_URI must be set in env.sh" >&2
++  exit 1
++fi
++
++if [ -n "$TOOLS_BRANCH" ]; then
++  # use the tools branch from env.sh
++  tools_branch=$TOOLS_BRANCH
++
++  if ! exists $TOOLS_REPO_URI $TOOLS_BRANCH; then
++    echo "Missing commit-flow tools branch: $TOOLS_BRANCH" >&2
++    exit 1;
++  fi
++
++else
++  project=$(basename `pwd`)
++
++  # try to find a tools branch for this project
++  current_branch=${GIT_BRANCH#*/}
++
++  if echo $current_branch | grep -iq '_dev$'; then
++    # strip off the _dev part
++    base_branch=${current_branch%_*}
++  else
++    base_branch=$current_branch
++  fi
++
++  # cdh5-1.5.0_5.5.x => cdh5-1.5.0
++  parent_branch=${base_branch%_*}
++
++  # find the closest tools branch (tools-cdh5-1.5.0_5.5.x or tools-cdh5-1.5.0)
++  if exists $TOOLS_REPO_URI "$project-$base_branch"; then
++    tools_branch="$project-$base_branch"
++  elif [ "$parent_ranch" != $base_branch ] && exists $TOOLS_REPO_URI "$project-$parent_branch"; then
++    tools_branch="$project-$parent_branch"
++  else
++    echo "Missing commit-flow tools branch: $project-$parent_branch" >&2
++    exit 1;
++  fi
++fi
++
++if [ ! -d "$here/tools" ]; then
++  # clone just the tools branch
++  echo "Creating $here/tools for commit-flow tools"
++  git init $here/tools
++fi
++
++# fetch just the tools branch, then check it out
++echo "Checking out $tools_branch of $TOOLS_REPO_URI"
++pushd $here/tools > /dev/null
++git fetch $TOOLS_REPO_URI $tools_branch && git checkout FETCH_HEAD || (echo "Failed to checkout tools" && exit 1)
++popd > /dev/null
++
++exec bash cloudera/tools/validate.sh $@
+-- 
+1.7.9.5
+

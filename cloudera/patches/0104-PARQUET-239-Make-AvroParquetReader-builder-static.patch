@@ -1,0 +1,32 @@
+From 4ea9123df21749ed62e32301156ef75dc0a63beb Mon Sep 17 00:00:00 2001
+From: Ryan Blue <blue@apache.org>
+Date: Tue, 7 Apr 2015 13:43:06 -0700
+Subject: [PATCH 104/176] PARQUET-239: Make AvroParquetReader#builder static.
+
+Fixes new API method added since 1.5.0.
+
+Author: Ryan Blue <blue@apache.org>
+
+Closes #158 from rdblue/PARQUET-239-fix-avro-builder and squashes the following commits:
+
+c8c64d7 [Ryan Blue] PARQUET-239: Make AvroParquetReader#builder static.
+---
+ .../main/java/parquet/avro/AvroParquetReader.java  |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/parquet-avro/src/main/java/parquet/avro/AvroParquetReader.java b/parquet-avro/src/main/java/parquet/avro/AvroParquetReader.java
+index 4771640..ca65de9 100644
+--- a/parquet-avro/src/main/java/parquet/avro/AvroParquetReader.java
++++ b/parquet-avro/src/main/java/parquet/avro/AvroParquetReader.java
+@@ -32,7 +32,7 @@ import parquet.hadoop.ParquetReader;
+  */
+ public class AvroParquetReader<T extends IndexedRecord> extends ParquetReader<T> {
+ 
+-  public Builder<T> builder(Path file) {
++  public static <T extends IndexedRecord> Builder<T> builder(Path file) {
+     return ParquetReader.builder(new AvroReadSupport<T>(), file);
+   }
+ 
+-- 
+1.7.9.5
+

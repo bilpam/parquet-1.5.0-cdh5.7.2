@@ -1,0 +1,431 @@
+From 69e79b038729bf0bbad3d49cce1e0834d376680b Mon Sep 17 00:00:00 2001
+From: Tianshuo Deng <tdeng@twitter.com>
+Date: Mon, 12 Jan 2015 16:01:06 -0800
+Subject: [PATCH 106/176] PARQUET-141: upgrade to scrooge 3.17.0, remove
+ reflection based field info inspection...
+
+upgrade to scrooge 3.17.0, remove reflection based field info inspection, support enum and requirement type correctly
+
+This PR is essential for scrooge write support https://github.com/apache/incubator-parquet-mr/pull/58
+
+Author: Tianshuo Deng <tdeng@twitter.com>
+
+Closes #88 from tsdeng/scrooge_schema_converter_upgrade and squashes the following commits:
+
+77cc12a [Tianshuo Deng] delete empty line, retrigger jenkins
+80d61ad [Tianshuo Deng] format
+26e1fe1 [Tianshuo Deng] fix exception handling
+706497d [Tianshuo Deng] support union
+1b51f0f [Tianshuo Deng] upgrade to scrooge 3.17.0, remove reflection based field info inspection, support enum and requirement type correctly
+---
+ parquet-scrooge/pom.xml                            |    4 +-
+ .../scrooge/ScroogeSchemaConversionException.java  |   18 ++
+ .../parquet/scrooge/ScroogeStructConverter.java    |  183 +++++++++++---------
+ .../scrooge/ScroogeStructConverterTest.java        |   11 +-
+ parquet-scrooge/src/test/thrift/test.thrift        |    5 +
+ 5 files changed, 138 insertions(+), 83 deletions(-)
+ create mode 100644 parquet-scrooge/src/main/java/parquet/scrooge/ScroogeSchemaConversionException.java
+
+diff --git a/parquet-scrooge/pom.xml b/parquet-scrooge/pom.xml
+index 36fdd23..4649dd2 100644
+--- a/parquet-scrooge/pom.xml
++++ b/parquet-scrooge/pom.xml
+@@ -92,7 +92,7 @@
+     <dependency>
+       <groupId>com.twitter</groupId>
+       <artifactId>scrooge-core_${scala.binary.version}</artifactId>
+-      <version>3.16.3</version>
++      <version>3.17.0</version>
+     </dependency>
+     <dependency>
+       <groupId>com.twitter</groupId>
+@@ -185,7 +185,7 @@
+         <plugin>
+             <groupId>com.twitter</groupId>
+             <artifactId>scrooge-maven-plugin</artifactId>
+-            <version>3.9.0</version>
++            <version>3.17.0</version>
+             <configuration>
+                 <outputDirectory>${project.build.directory}/generated-test-sources/scrooge</outputDirectory>
+                 <thriftNamespaceMappings>
+diff --git a/parquet-scrooge/src/main/java/parquet/scrooge/ScroogeSchemaConversionException.java b/parquet-scrooge/src/main/java/parquet/scrooge/ScroogeSchemaConversionException.java
+new file mode 100644
+index 0000000..8b8ebe3
+--- /dev/null
++++ b/parquet-scrooge/src/main/java/parquet/scrooge/ScroogeSchemaConversionException.java
+@@ -0,0 +1,18 @@
++package parquet.scrooge;
++
++import parquet.ParquetRuntimeException;
++
++/**
++ * Throw this exception when there is an error converting a Scrooge class to
++ * thrift schema
++ */
++class ScroogeSchemaConversionException extends ParquetRuntimeException {
++  public ScroogeSchemaConversionException(String message, Throwable cause) {
++    super(message, cause);
++  }
++
++  public ScroogeSchemaConversionException(String message) {
++    super(message);
++  }
++}
++
+diff --git a/parquet-scrooge/src/main/java/parquet/scrooge/ScroogeStructConverter.java b/parquet-scrooge/src/main/java/parquet/scrooge/ScroogeStructConverter.java
+index 1c2013c..22bbf6a 100644
+--- a/parquet-scrooge/src/main/java/parquet/scrooge/ScroogeStructConverter.java
++++ b/parquet-scrooge/src/main/java/parquet/scrooge/ScroogeStructConverter.java
+@@ -19,27 +19,23 @@
+ package parquet.scrooge;
+ 
+ import com.twitter.scrooge.ThriftStructCodec;
+-import com.twitter.scrooge.ThriftStructField;
++import com.twitter.scrooge.ThriftStructFieldInfo;
+ import parquet.thrift.struct.ThriftField;
+ import parquet.thrift.struct.ThriftType;
+ import parquet.thrift.struct.ThriftTypeID;
+-import static parquet.thrift.struct.ThriftField.Requirement;
+-import static parquet.thrift.struct.ThriftField.Requirement.*;
+-
+-import scala.collection.Iterator;
+ import scala.collection.JavaConversions;
+ import scala.collection.JavaConversions$;
+ import scala.collection.Seq;
+ import scala.reflect.Manifest;
+ 
+-import java.lang.reflect.InvocationTargetException;
+-import java.lang.reflect.Method;
+-import java.lang.reflect.ParameterizedType;
+-import java.lang.reflect.Type;
++import java.lang.reflect.*;
+ import java.util.ArrayList;
+ import java.util.LinkedList;
+ import java.util.List;
+ 
++import static parquet.thrift.struct.ThriftField.Requirement;
++import static parquet.thrift.struct.ThriftField.Requirement.*;
++
+ /**
+  * Class to convert a scrooge generated class to {@link ThriftType.StructType}. {@link ScroogeReadSupport } uses this
+  * class to get the requested schema
+@@ -55,37 +51,97 @@ public class ScroogeStructConverter {
+    * @return
+    * @throws Exception
+    */
+-  public ThriftType.StructType convert(Class scroogeClass)  {
+-    return convertStructFromClassName(scroogeClass.getName());
++  public ThriftType.StructType convert(Class scroogeClass) {
++    return convertStructFromClass(scroogeClass);
+   }
+ 
+-  private ThriftType.StructType convertStructFromClassName(String className) {
+-    //Struct metadata is stored in the companion class
+-    Class<?> companionClass = null;
++  private Class getCompanionClass(Class klass) {
+     try {
+-      companionClass = Class.forName(className + "$");
++     return Class.forName(klass.getName() + "$");
+     } catch (ClassNotFoundException e) {
+-     throw new IllegalArgumentException("Can not find companion object for scrooge class " + className, e);
++      throw new ScroogeSchemaConversionException("Can not find companion object for scrooge class " + klass, e);
+     }
+-    return convertCompanionClassToStruct(companionClass);
++  }
++
++  private ThriftType.StructType convertStructFromClass(Class klass) {
++    return convertCompanionClassToStruct(getCompanionClass(klass));
+   }
+ 
+   private ThriftType.StructType convertCompanionClassToStruct(Class<?> companionClass) {
+     ThriftStructCodec companionObject = null;
+     try {
+       companionObject = (ThriftStructCodec<?>)companionClass.getField("MODULE$").get(null);
+-    } catch (Exception e) {
+-      throw new RuntimeException("Can not get ThriftStructCodec from companion object of " + companionClass.getName(), e);
++    } catch (ReflectiveOperationException e) {
++      throw new ScroogeSchemaConversionException("Can not get ThriftStructCodec from companion object of " + companionClass.getName(), e);
+     }
+ 
+     List<ThriftField> children = new LinkedList<ThriftField>();//{@link ThriftType.StructType} uses foreach loop to iterate the children, yields O(n) time for linked list
+-    Iterable<ThriftStructField> scroogeFields = JavaConversions$.MODULE$.asJavaIterable(companionObject.metaData().fields());
+-    for (ThriftStructField field : scroogeFields) {
++    Iterable<ThriftStructFieldInfo> scroogeFields = getFieldInfos(companionObject);
++    for (ThriftStructFieldInfo field : scroogeFields) {
+       children.add(toThriftField(field));
+     }
+     return new ThriftType.StructType(children);
+   }
+ 
++  private Iterable<ThriftStructFieldInfo> getFieldInfos(ThriftStructCodec c) {
++    Class<? extends ThriftStructCodec> klass = c.getClass();
++    if (isUnion(klass)){
++      // Union needs special treatment since currently scrooge does not generates the fieldInfos
++      // field in the parent union class
++      return getFieldInfosForUnion(klass);
++    } else {
++      //each struct has a generated fieldInfos method to provide metadata to its fields
++      try {
++        Object r = klass.getMethod("fieldInfos").invoke(c);
++        Iterable<ThriftStructFieldInfo> a = JavaConversions$.MODULE$.asJavaIterable((scala.collection.Iterable<ThriftStructFieldInfo>)r);
++        return a;
++      } catch (ReflectiveOperationException e) {
++        throw new ScroogeSchemaConversionException("can not get field Info from: " + c.toString(), e);
++      }
++    }
++  }
++
++
++  private Iterable<ThriftStructFieldInfo> getFieldInfosForUnion(Class klass) {
++    ArrayList<ThriftStructFieldInfo> fields = new ArrayList<ThriftStructFieldInfo>();
++    for(Field f: klass.getDeclaredFields()){
++       if (f.getType().equals(Manifest.class)) {
++         Class unionClass = (Class)((ParameterizedType)f.getGenericType()).getActualTypeArguments()[0];
++         Class companionUnionClass = getCompanionClass(unionClass);
++         try {
++           Object companionUnionObj = companionUnionClass.getField("MODULE$").get(null);
++           ThriftStructFieldInfo info = (ThriftStructFieldInfo)companionUnionClass.getMethod("fieldInfo").invoke(companionUnionObj);
++           fields.add(info);
++         } catch (ReflectiveOperationException e) {
++           throw new ScroogeSchemaConversionException("can not find fiedInfo for " + unionClass, e);
++         }
++      }
++    }
++    return fields;
++  }
++
++  private boolean isUnion(Class klass){
++    for(Field f: klass.getDeclaredFields()) {
++         if (f.getName().equals("Union"))
++           return true;
++    }
++    return false;
++  }
++
++
++  private Requirement getRequirementType(ThriftStructFieldInfo f) {
++    if (f.isOptional() && !f.isRequired()) {
++      return OPTIONAL;
++    } else if (f.isRequired() && !f.isOptional()) {
++      return REQUIRED;
++    } else if (!f.isOptional() && !f.isRequired()) {
++      return DEFAULT;
++    } else {
++      throw new ScroogeSchemaConversionException("can not determine requirement type for : " + f.toString()
++              + ", isOptional=" + f.isOptional() + ", isRequired=" + f.isRequired());
++    }
++  }
++
+   /**
+    * Convert thrift field in scrooge to ThriftField in parquet
+    * Use reflection to detect if a field is optional or required since scrooge does not provide requirement information
+@@ -100,9 +156,8 @@ public class ScroogeStructConverter {
+    * @return
+    * @throws Exception
+    */
+-  public ThriftField toThriftField(ThriftStructField scroogeField) {
+-    Requirement requirement = isOptional(scroogeField)? OPTIONAL : REQUIRED;
+-
++  public ThriftField toThriftField(ThriftStructFieldInfo scroogeField) {
++    Requirement requirement = getRequirementType(scroogeField);
+     String fieldName = scroogeField.tfield().name;
+     short fieldId = scroogeField.tfield().id;
+     byte thriftTypeByte = scroogeField.tfield().type;
+@@ -153,46 +208,27 @@ public class ScroogeStructConverter {
+     return new ThriftField(fieldName, fieldId, requirement, thriftType);
+   }
+ 
+-  /**
+-   * extract type arguments from a thrift field, such as the key and value type in a map
+-   *
+-   * @param field
+-   * @return
+-   */
+-  private List<Class> getTypeArguments(ThriftStructField field) {
+-    Iterator<Manifest> it = ((Manifest)field.manifest().get()).typeArguments().iterator();
+-    List<Class> types = new ArrayList<Class>();
+-    while (it.hasNext()) {
+-      types.add(it.next().erasure());
+-    }
+-    return types;
+-  }
+-
+-  private ThriftType convertSetTypeField(ThriftStructField f, Requirement requirement) {
+-    List<Class> typeArguments = getTypeArguments(f);
+-    ThriftType elementType = convertClassToThriftType(typeArguments.get(0));
++  private ThriftType convertSetTypeField(ThriftStructFieldInfo f, Requirement requirement) {
++    ThriftType elementType = convertClassToThriftType(f.valueManifest().get().runtimeClass());
+     //Set only has one sub-field as element field, therefore using hard-coded 1 as fieldId,
+     //it's the same as the solution used in ElephantBird
+-    ThriftField elementField = generateFieldWithoutId(f.name(), requirement, elementType);
++    ThriftField elementField = generateFieldWithoutId(f.tfield().name, requirement, elementType);
+     return new ThriftType.SetType(elementField);
+   }
+ 
+-  private ThriftType convertListTypeField(ThriftStructField f, Requirement requirement) {
+-    List<Class> typeArguments = getTypeArguments(f);
+-    ThriftType elementType = convertClassToThriftType(typeArguments.get(0));
+-    ThriftField elementField = generateFieldWithoutId(f.name(), requirement, elementType);
++  private ThriftType convertListTypeField(ThriftStructFieldInfo f, Requirement requirement) {
++    ThriftType elementType = convertClassToThriftType(f.valueManifest().get().runtimeClass());
++    ThriftField elementField = generateFieldWithoutId(f.tfield().name, requirement, elementType);
+     return new ThriftType.ListType(elementField);
+   }
+ 
+-  private ThriftType convertMapTypeField(ThriftStructField f, Requirement requirement) {
+-    List<Class> typeArguments = getTypeArguments(f);
+-    Class keyClass = typeArguments.get(0);
+-    ThriftType keyType = convertClassToThriftType(keyClass);
+-    Class valueClass = typeArguments.get(1);
++  private ThriftType convertMapTypeField(ThriftStructFieldInfo f, Requirement requirement) {
++    ThriftType keyType = convertClassToThriftType(f.keyManifest().get().runtimeClass());
++    ThriftField keyField = generateFieldWithoutId(f.tfield().name + "_map_key", requirement, keyType);
++
++    ThriftType valueType = convertClassToThriftType(f.valueManifest().get().runtimeClass());
++    ThriftField valueField = generateFieldWithoutId(f.tfield().name + "_map_value", requirement, valueType);
+ 
+-    ThriftField keyField = generateFieldWithoutId(f.name() + "_map_key", requirement, keyType);
+-    ThriftType valueType = convertClassToThriftType(valueClass);
+-    ThriftField valueField = generateFieldWithoutId(f.name() + "_map_value", requirement, valueType);
+     return new ThriftType.MapType(keyField, valueField);
+   }
+ 
+@@ -233,24 +269,12 @@ public class ScroogeStructConverter {
+     } else if (typeClass == String.class) {
+       return new ThriftType.StringType();
+     } else {
+-      return convertStructFromClassName(typeClass.getName());
+-    }
+-  }
+-
+-  private ThriftType convertStructTypeField(ThriftStructField f) {
+-    Type structClassType = f.method().getReturnType();
+-    if (isOptional(f)) {
+-      structClassType = extractClassFromOption(f.method().getGenericReturnType());
++      return convertStructFromClass(typeClass);
+     }
+-    return convertStructFromClassName(((Class)structClassType).getName());
+   }
+ 
+-  private Type extractClassFromOption(Type genericReturnType) {
+-    return ((ParameterizedType)genericReturnType).getActualTypeArguments()[0];
+-  }
+-
+-  private boolean isOptional(ThriftStructField f) {
+-    return f.method().getReturnType() == scala.Option.class;
++  private ThriftType convertStructTypeField(ThriftStructFieldInfo f) {
++    return convertStructFromClass(f.manifest().runtimeClass());
+   }
+ 
+   /**
+@@ -265,39 +289,38 @@ public class ScroogeStructConverter {
+     return JavaConversions.seqAsJavaList((Seq)result);
+   }
+ 
+-  public ThriftType convertEnumTypeField(ThriftStructField f) {
++  public ThriftType convertEnumTypeField(ThriftStructFieldInfo f) {
+     List<ThriftType.EnumValue> enumValues = new ArrayList<ThriftType.EnumValue>();
+ 
+-    String enumName;
+-    if (isOptional(f)) {
+-      enumName = ((Class)extractClassFromOption(f.method().getGenericReturnType())).getName();
+-    } else {
+-      enumName = f.method().getReturnType().getName();
+-    }
++    String enumName = f.manifest().runtimeClass().getName();
+     try {
+       List enumCollection = getEnumList(enumName);
+       for (Object enumObj : enumCollection) {
+         ScroogeEnumDesc enumDesc = ScroogeEnumDesc.getEnumDesc(enumObj);
+         //be compatible with thrift generated enum which have capitalized name
+-        enumValues.add(new ThriftType.EnumValue(enumDesc.id, enumDesc.name.replaceAll("([a-z])([A-Z])","$1_$2").toUpperCase()));
++        enumValues.add(new ThriftType.EnumValue(enumDesc.id, enumDesc.originalName));
+       }
+       return new ThriftType.EnumType(enumValues);
+-    } catch (Exception e) {
+-      throw new IllegalArgumentException("Can not convert enum field " + f, e);
++    } catch (ReflectiveOperationException e) {
++      throw new ScroogeSchemaConversionException("Can not convert enum field " + f, e);
+     }
++
+   }
+ 
+   private static class ScroogeEnumDesc {
+     private int id;
+     private String name;
++    private String originalName;
+ 
+     public static ScroogeEnumDesc getEnumDesc(Object rawScroogeEnum) throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+       Class enumClass = rawScroogeEnum.getClass();
+       Method valueMethod = enumClass.getMethod("value", new Class[]{});
+       Method nameMethod = enumClass.getMethod("name", new Class[]{});
++      Method originalNameMethod = enumClass.getMethod("originalName", new Class[]{});
+       ScroogeEnumDesc result = new ScroogeEnumDesc();
+       result.id = (Integer)valueMethod.invoke(rawScroogeEnum, null);
+       result.name = (String)nameMethod.invoke(rawScroogeEnum, null);
++      result.originalName = (String)originalNameMethod.invoke(rawScroogeEnum, null);
+       return result;
+     }
+   }
+diff --git a/parquet-scrooge/src/test/java/parquet/scrooge/ScroogeStructConverterTest.java b/parquet-scrooge/src/test/java/parquet/scrooge/ScroogeStructConverterTest.java
+index 93db6af..7431c10 100644
+--- a/parquet-scrooge/src/test/java/parquet/scrooge/ScroogeStructConverterTest.java
++++ b/parquet-scrooge/src/test/java/parquet/scrooge/ScroogeStructConverterTest.java
+@@ -19,6 +19,7 @@
+ package parquet.scrooge;
+ 
+ import org.junit.Test;
++
+ import parquet.scrooge.test.AddressWithStreetWithDefaultRequirement;
+ import parquet.scrooge.test.TestFieldOfEnum;
+ import parquet.scrooge.test.TestListPrimitive;
+@@ -28,6 +29,7 @@ import parquet.scrooge.test.TestMapPrimitiveValue;
+ import parquet.scrooge.test.TestOptionalMap;
+ import parquet.scrooge.test.TestPersonWithAllInformation;
+ import parquet.scrooge.test.TestSetPrimitive;
++import parquet.scrooge.test.TestUnion;
+ import parquet.thrift.ThriftSchemaConverter;
+ import parquet.thrift.struct.ThriftType;
+ import static org.junit.Assert.assertEquals;
+@@ -45,6 +47,13 @@ public class ScroogeStructConverterTest {
+   }
+ 
+   @Test
++  public void testUnion() throws Exception {
++    ThriftType.StructType expected = new ThriftSchemaConverter().toStructType(parquet.thrift.test.TestUnion.class);
++    ThriftType.StructType scroogeUnion = new ScroogeStructConverter().convert(TestUnion.class);
++    assertEquals(expected, scroogeUnion);
++  }
++
++  @Test
+   public void testConvertPrimitiveMapValue() throws Exception{
+     ThriftType.StructType scroogeMap = new ScroogeStructConverter().convert(TestMapPrimitiveValue.class);
+     ThriftType.StructType expected = new ThriftSchemaConverter().toStructType(parquet.thrift.test.TestMapPrimitiveValue.class);
+@@ -95,7 +104,7 @@ public class ScroogeStructConverterTest {
+   public void testDefaultFields() throws Exception{
+     ThriftType.StructType scroogePerson = new ScroogeStructConverter().convert(AddressWithStreetWithDefaultRequirement.class);
+     ThriftType.StructType expected = new ThriftSchemaConverter().toStructType(parquet.thrift.test.AddressWithStreetWithDefaultRequirement.class);
+-//    assertEquals(expected.toJSON(), scroogePerson.toJSON());
++    assertEquals(expected.toJSON(), scroogePerson.toJSON());
+   }
+ 
+   @Test
+diff --git a/parquet-scrooge/src/test/thrift/test.thrift b/parquet-scrooge/src/test/thrift/test.thrift
+index a1a5398..11c598f 100644
+--- a/parquet-scrooge/src/test/thrift/test.thrift
++++ b/parquet-scrooge/src/test/thrift/test.thrift
+@@ -151,6 +151,11 @@ struct TestMapPrimitiveValue {
+   7: required map<string,string> string_map
+ }
+ 
++union TestUnion {
++  1: TestPerson first_person
++  2: TestMapComplex second_map
++}
++
+ enum Operation {
+   ADD = 1,
+   SUBTRACT = 2,
+-- 
+1.7.9.5
+

@@ -1,0 +1,34 @@
+From a7bbd7253ea909b5e4bdc9b64a4950307876892b Mon Sep 17 00:00:00 2001
+From: Ryan Blue <blue@apache.org>
+Date: Wed, 12 Aug 2015 12:40:39 -0700
+Subject: [PATCH 103/176] CLOUDERA-BUILD. Fix nested comments.
+
+The last commit added comments to a section of the POM that is already
+commented out, which breaks XML. This changes the comments slightly to
+avoid the problem.
+---
+ pom.xml |    8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/pom.xml b/pom.xml
+index 7923cd4..cb6eccc 100644
+--- a/pom.xml
++++ b/pom.xml
+@@ -282,10 +282,10 @@
+                      <exclude>parquet/column/values/**</exclude>
+                      <exclude>parquet/column/**</exclude>
+                      <exclude>parquet/hadoop/ParquetInputSplit</exclude>
+-                     <!-- temporary rules -->
+-                     <exclude>parquet/io/api/Binary</exclude> <!-- false positive, added interfaces -->
+-                     <exclude>parquet/hadoop/metadata/Canonicalizer</exclude> <!-- moved to different module -->
+-                     <exclude>parquet/hadoop/metadata/ColumnPath</exclude> <!-- moved to different module, added methods -->
++                     <!- temporary rules ->
++                     <exclude>parquet/io/api/Binary</exclude> <!- false positive, added interfaces ->
++                     <exclude>parquet/hadoop/metadata/Canonicalizer</exclude> <!- moved to different module ->
++                     <exclude>parquet/hadoop/metadata/ColumnPath</exclude> <!- moved to different module, added methods ->
+                    </excludes>
+                  </requireBackwardCompatibility>
+                </rules>
+-- 
+1.7.9.5
+

@@ -1,0 +1,49 @@
+From bcdf7944b62d181ab9e26f709d55081e4acf303e Mon Sep 17 00:00:00 2001
+From: Chris Bannister <c.bannister@gmail.com>
+Date: Mon, 20 Jul 2015 09:59:29 -0700
+Subject: [PATCH 155/176] PARQUET-340: MemoryManager: max memory can be
+ truncated
+
+Using float will cause the max heap limit to be limited to 2147483647
+due to math.round(float) if used with a large heap. This should be a double
+precision to prevent rounding to an int32 before storing into a long.
+
+Author: Chris Bannister <c.bannister@gmail.com>
+
+Closes #246 from Zariel/default-mem-truncated and squashes the following commits:
+
+bf375f6 [Chris Bannister] MemoryManager: ensure max memory is not truncated
+---
+ .../main/java/parquet/hadoop/MemoryManager.java    |    2 +-
+ .../java/parquet/hadoop/TestMemoryManager.java     |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/parquet-hadoop/src/main/java/parquet/hadoop/MemoryManager.java b/parquet-hadoop/src/main/java/parquet/hadoop/MemoryManager.java
+index 874e9df..2e08cc7 100644
+--- a/parquet-hadoop/src/main/java/parquet/hadoop/MemoryManager.java
++++ b/parquet-hadoop/src/main/java/parquet/hadoop/MemoryManager.java
+@@ -57,7 +57,7 @@ public class MemoryManager {
+ 
+     memoryPoolRatio = ratio;
+     minMemoryAllocation = minAllocation;
+-    totalMemoryPool = Math.round(ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getMax
++    totalMemoryPool = Math.round((double) ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getMax
+         () * ratio);
+     LOG.debug(String.format("Allocated total memory pool is: %,d", totalMemoryPool));
+   }
+diff --git a/parquet-hadoop/src/test/java/parquet/hadoop/TestMemoryManager.java b/parquet-hadoop/src/test/java/parquet/hadoop/TestMemoryManager.java
+index 5ee0e3f..e73506e 100644
+--- a/parquet-hadoop/src/test/java/parquet/hadoop/TestMemoryManager.java
++++ b/parquet-hadoop/src/test/java/parquet/hadoop/TestMemoryManager.java
+@@ -54,7 +54,7 @@ public class TestMemoryManager {
+   @Before
+   public void setUp() {
+     GroupWriteSupport.setSchema(MessageTypeParser.parseMessageType(writeSchema),conf);
+-    expectPoolSize = Math.round(ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getMax
++    expectPoolSize = Math.round((double) ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getMax
+         () * MemoryManager.DEFAULT_MEMORY_POOL_RATIO);
+     rowGroupSize = (int) Math.floor(expectPoolSize / 2);
+     conf.setInt(ParquetOutputFormat.BLOCK_SIZE, rowGroupSize);
+-- 
+1.7.9.5
+

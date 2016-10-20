@@ -1,0 +1,40 @@
+From b97cb21741f7bc46d08180deb335625b1f9bace4 Mon Sep 17 00:00:00 2001
+From: Ryan Blue <blue@apache.org>
+Date: Thu, 13 Aug 2015 17:29:40 -0700
+Subject: [PATCH 136/176] CLOUDERA-BUILD. Add assertTypeValid with
+ OriginalType.
+
+This method signature was removed and technically public. While it is
+unlikely that any customer is using it, it is easy to add back to avoid
+a binary incompatibility.
+---
+ .../parquet/filter2/predicate/ValidTypeMap.java    |   13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/parquet-column/src/main/java/parquet/filter2/predicate/ValidTypeMap.java b/parquet-column/src/main/java/parquet/filter2/predicate/ValidTypeMap.java
+index c901e0c..5b120b4 100644
+--- a/parquet-column/src/main/java/parquet/filter2/predicate/ValidTypeMap.java
++++ b/parquet-column/src/main/java/parquet/filter2/predicate/ValidTypeMap.java
+@@ -83,6 +83,19 @@ public class ValidTypeMap {
+    * @param foundColumn the column as declared by the user
+    * @param primitiveType the primitive type according to the schema
+    */
++  public static <T extends Comparable<T>> void assertTypeValid(Column<T> foundColumn, PrimitiveTypeName primitiveType, OriginalType ignored) {
++    assertTypeValid(foundColumn, primitiveType);
++  }
++
++  /**
++   * Asserts that foundColumn was declared as a type that is compatible with the type for this column found
++   * in the schema of the parquet file.
++   *
++   * @throws java.lang.IllegalArgumentException if the types do not align
++   *
++   * @param foundColumn the column as declared by the user
++   * @param primitiveType the primitive type according to the schema
++   */
+   public static <T extends Comparable<T>> void assertTypeValid(Column<T> foundColumn, PrimitiveTypeName primitiveType) {
+     Class<T> foundColumnType = foundColumn.getColumnType();
+     ColumnPath columnPath = foundColumn.getColumnPath();
+-- 
+1.7.9.5
+

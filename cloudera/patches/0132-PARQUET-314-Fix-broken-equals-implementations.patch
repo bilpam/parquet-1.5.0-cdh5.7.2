@@ -1,0 +1,73 @@
+From 1fa558f50ec78dbed91914cd8e7cf497b3a9de56 Mon Sep 17 00:00:00 2001
+From: Nezih Yigitbasi <nyigitbasi@netflix.com>
+Date: Mon, 22 Jun 2015 12:37:37 -0700
+Subject: [PATCH 132/176] PARQUET-314: Fix broken equals implementations
+
+Author: Nezih Yigitbasi <nyigitbasi@netflix.com>
+
+Closes #223 from nezihyigitbasi/parquet-fixes and squashes the following commits:
+
+5279e60 [Nezih Yigitbasi] Override Object.equals properly
+---
+ .../main/java/parquet/column/ColumnDescriptor.java |    9 +++++++--
+ .../java/parquet/column/statistics/Statistics.java |   15 +++++++++++----
+ 2 files changed, 18 insertions(+), 6 deletions(-)
+
+diff --git a/parquet-column/src/main/java/parquet/column/ColumnDescriptor.java b/parquet-column/src/main/java/parquet/column/ColumnDescriptor.java
+index acbb248..57b8454 100644
+--- a/parquet-column/src/main/java/parquet/column/ColumnDescriptor.java
++++ b/parquet-column/src/main/java/parquet/column/ColumnDescriptor.java
+@@ -106,8 +106,13 @@ public class ColumnDescriptor implements Comparable<ColumnDescriptor> {
+   }
+ 
+   @Override
+-  public boolean equals(Object obj) {
+-    return Arrays.equals(path, ((ColumnDescriptor)obj).path);
++  public boolean equals(Object other) {
++    if (other == this)
++      return true;
++    if (!(other instanceof ColumnDescriptor))
++      return false;
++    ColumnDescriptor descriptor = (ColumnDescriptor) other;
++    return Arrays.equals(path, descriptor.path);
+   }
+ 
+   @Override
+diff --git a/parquet-column/src/main/java/parquet/column/statistics/Statistics.java b/parquet-column/src/main/java/parquet/column/statistics/Statistics.java
+index 107f384..ff11bfd 100644
+--- a/parquet-column/src/main/java/parquet/column/statistics/Statistics.java
++++ b/parquet-column/src/main/java/parquet/column/statistics/Statistics.java
+@@ -117,19 +117,26 @@ public abstract class Statistics<T extends Comparable<T>> {
+ 
+   /**
+    * Equality comparison method to compare two statistics objects.
+-   * @param stats Statistics object to compare against
++   * @param other Object to compare against
+    * @return true if objects are equal, false otherwise
+    */
+-  public boolean equals(Statistics stats) {
++  @Override
++  public boolean equals(Object other) {
++    if (other == this)
++      return true;
++    if (!(other instanceof Statistics))
++      return false;
++    Statistics stats = (Statistics) other;
+     return Arrays.equals(stats.getMaxBytes(), this.getMaxBytes()) &&
+-           Arrays.equals(stats.getMinBytes(), this.getMinBytes()) &&
+-           stats.getNumNulls() == this.getNumNulls();
++            Arrays.equals(stats.getMinBytes(), this.getMinBytes()) &&
++            stats.getNumNulls() == this.getNumNulls();
+   }
+ 
+   /**
+    * Hash code for the statistics object
+    * @return hash code int
+    */
++  @Override
+   public int hashCode() {
+     return 31 * Arrays.hashCode(getMaxBytes()) + 17 * Arrays.hashCode(getMinBytes()) + Long.valueOf(this.getNumNulls()).hashCode();
+   }
+-- 
+1.7.9.5
+

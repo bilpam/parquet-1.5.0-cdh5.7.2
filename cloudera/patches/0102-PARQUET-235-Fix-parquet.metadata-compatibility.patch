@@ -1,0 +1,688 @@
+From 5ccb3e8af61affcb9838747098a46f4a4a1281fe Mon Sep 17 00:00:00 2001
+From: Ryan Blue <blue@apache.org>
+Date: Tue, 7 Apr 2015 13:14:13 -0700
+Subject: [PATCH 102/176] PARQUET-235: Fix parquet.metadata compatibility.
+
+ColumnPath and Canonicalizer were moved from parquet-hadoop to
+parquet-common in parquet.common.{internal,schema}, which broke
+compatibility and would require bumping the major version. This moves
+the classes back into parquet.hadoop.metadata and adds temporary
+exclusions for the move between modules. There are no breaking changes
+to the classes themselves, verified by copying them into parquet-hadoop
+and building.
+
+This also changes the previous version back to 1.5.0 rather than an RC
+(which carries no compatibility guarantees, though this is compatible
+with both version). It also adds an exclusions for a false positive in
+Binary.
+
+Author: Ryan Blue <blue@apache.org>
+
+Closes #166 from rdblue/PARQUET-235-fix-parquet-metadata and squashes the following commits:
+
+f56a57e [Ryan Blue] PARQUET-235: Fix parquet.metadata compatibility.
+
+Conflicts:
+	pom.xml
+Resolution:
+    Conflict in semver configuration, which is not currently used.
+---
+ .../java/parquet/filter2/predicate/FilterApi.java  |    2 +-
+ .../java/parquet/filter2/predicate/Operators.java  |    2 +-
+ .../predicate/SchemaCompatibilityValidator.java    |    2 +-
+ .../parquet/filter2/predicate/ValidTypeMap.java    |    2 +-
+ .../recordlevel/FilteringGroupConverter.java       |    2 +-
+ .../recordlevel/FilteringRecordMaterializer.java   |    2 +-
+ ...ementallyUpdatedFilterPredicateBuilderBase.java |    2 +-
+ .../filter2/predicate/TestFilterApiMethods.java    |    2 +-
+ .../filter2/predicate/TestValidTypeMap.java        |    2 +-
+ .../parquet/common/internal/Canonicalizer.java     |   62 ------------
+ .../java/parquet/common/schema/ColumnPath.java     |   99 --------------------
+ .../parquet/hadoop/metadata/Canonicalizer.java     |   62 ++++++++++++
+ .../java/parquet/hadoop/metadata/ColumnPath.java   |   97 +++++++++++++++++++
+ ...crementallyUpdatedFilterPredicateGenerator.java |    2 +-
+ .../filter2/statisticslevel/StatisticsFilter.java  |    2 +-
+ .../format/converter/ParquetMetadataConverter.java |    2 +-
+ .../java/parquet/hadoop/ParquetFileReader.java     |    2 +-
+ .../java/parquet/hadoop/ParquetFileWriter.java     |    2 +-
+ .../hadoop/metadata/ColumnChunkMetaData.java       |    1 -
+ .../hadoop/metadata/ColumnChunkProperties.java     |    2 -
+ .../java/parquet/hadoop/metadata/EncodingList.java |    1 -
+ .../statisticslevel/TestStatisticsFilter.java      |    2 +-
+ .../test/java/parquet/hadoop/TestInputFormat.java  |    2 +-
+ .../hadoop/metadata/TestColumnChunkMetaData.java   |    1 -
+ pom.xml                                            |    6 +-
+ 25 files changed, 180 insertions(+), 183 deletions(-)
+ delete mode 100644 parquet-common/src/main/java/parquet/common/internal/Canonicalizer.java
+ delete mode 100644 parquet-common/src/main/java/parquet/common/schema/ColumnPath.java
+ create mode 100644 parquet-common/src/main/java/parquet/hadoop/metadata/Canonicalizer.java
+ create mode 100644 parquet-common/src/main/java/parquet/hadoop/metadata/ColumnPath.java
+
+diff --git a/parquet-column/src/main/java/parquet/filter2/predicate/FilterApi.java b/parquet-column/src/main/java/parquet/filter2/predicate/FilterApi.java
+index 4a4ad0b..6485a6e 100644
+--- a/parquet-column/src/main/java/parquet/filter2/predicate/FilterApi.java
++++ b/parquet-column/src/main/java/parquet/filter2/predicate/FilterApi.java
+@@ -20,7 +20,7 @@ package parquet.filter2.predicate;
+ 
+ import java.io.Serializable;
+ 
+-import parquet.common.schema.ColumnPath;
++import parquet.hadoop.metadata.ColumnPath;
+ import parquet.filter2.predicate.Operators.And;
+ import parquet.filter2.predicate.Operators.BinaryColumn;
+ import parquet.filter2.predicate.Operators.BooleanColumn;
+diff --git a/parquet-column/src/main/java/parquet/filter2/predicate/Operators.java b/parquet-column/src/main/java/parquet/filter2/predicate/Operators.java
+index 80c5a83..8feace9 100644
+--- a/parquet-column/src/main/java/parquet/filter2/predicate/Operators.java
++++ b/parquet-column/src/main/java/parquet/filter2/predicate/Operators.java
+@@ -20,7 +20,7 @@ package parquet.filter2.predicate;
+ 
+ import java.io.Serializable;
+ 
+-import parquet.common.schema.ColumnPath;
++import parquet.hadoop.metadata.ColumnPath;
+ import parquet.io.api.Binary;
+ 
+ import static parquet.Preconditions.checkNotNull;
+diff --git a/parquet-column/src/main/java/parquet/filter2/predicate/SchemaCompatibilityValidator.java b/parquet-column/src/main/java/parquet/filter2/predicate/SchemaCompatibilityValidator.java
+index d5e5fe7..05fcc8c 100644
+--- a/parquet-column/src/main/java/parquet/filter2/predicate/SchemaCompatibilityValidator.java
++++ b/parquet-column/src/main/java/parquet/filter2/predicate/SchemaCompatibilityValidator.java
+@@ -22,7 +22,7 @@ import java.util.HashMap;
+ import java.util.Map;
+ 
+ import parquet.column.ColumnDescriptor;
+-import parquet.common.schema.ColumnPath;
++import parquet.hadoop.metadata.ColumnPath;
+ import parquet.filter2.predicate.Operators.And;
+ import parquet.filter2.predicate.Operators.Column;
+ import parquet.filter2.predicate.Operators.ColumnFilterPredicate;
+diff --git a/parquet-column/src/main/java/parquet/filter2/predicate/ValidTypeMap.java b/parquet-column/src/main/java/parquet/filter2/predicate/ValidTypeMap.java
+index 2f0016b..4cbfcc7 100644
+--- a/parquet-column/src/main/java/parquet/filter2/predicate/ValidTypeMap.java
++++ b/parquet-column/src/main/java/parquet/filter2/predicate/ValidTypeMap.java
+@@ -23,7 +23,7 @@ import java.util.HashSet;
+ import java.util.Map;
+ import java.util.Set;
+ 
+-import parquet.common.schema.ColumnPath;
++import parquet.hadoop.metadata.ColumnPath;
+ import parquet.filter2.predicate.Operators.Column;
+ import parquet.io.api.Binary;
+ import parquet.schema.OriginalType;
+diff --git a/parquet-column/src/main/java/parquet/filter2/recordlevel/FilteringGroupConverter.java b/parquet-column/src/main/java/parquet/filter2/recordlevel/FilteringGroupConverter.java
+index fc40f31..8b1c872 100644
+--- a/parquet-column/src/main/java/parquet/filter2/recordlevel/FilteringGroupConverter.java
++++ b/parquet-column/src/main/java/parquet/filter2/recordlevel/FilteringGroupConverter.java
+@@ -22,7 +22,7 @@ import java.util.ArrayList;
+ import java.util.List;
+ import java.util.Map;
+ 
+-import parquet.common.schema.ColumnPath;
++import parquet.hadoop.metadata.ColumnPath;
+ import parquet.filter2.recordlevel.IncrementallyUpdatedFilterPredicate.ValueInspector;
+ import parquet.io.PrimitiveColumnIO;
+ import parquet.io.api.Converter;
+diff --git a/parquet-column/src/main/java/parquet/filter2/recordlevel/FilteringRecordMaterializer.java b/parquet-column/src/main/java/parquet/filter2/recordlevel/FilteringRecordMaterializer.java
+index 801dd8c..d4a2926 100644
+--- a/parquet-column/src/main/java/parquet/filter2/recordlevel/FilteringRecordMaterializer.java
++++ b/parquet-column/src/main/java/parquet/filter2/recordlevel/FilteringRecordMaterializer.java
+@@ -24,7 +24,7 @@ import java.util.HashMap;
+ import java.util.List;
+ import java.util.Map;
+ 
+-import parquet.common.schema.ColumnPath;
++import parquet.hadoop.metadata.ColumnPath;
+ import parquet.filter2.recordlevel.IncrementallyUpdatedFilterPredicate.ValueInspector;
+ import parquet.io.PrimitiveColumnIO;
+ import parquet.io.api.GroupConverter;
+diff --git a/parquet-column/src/main/java/parquet/filter2/recordlevel/IncrementallyUpdatedFilterPredicateBuilderBase.java b/parquet-column/src/main/java/parquet/filter2/recordlevel/IncrementallyUpdatedFilterPredicateBuilderBase.java
+index 0c0f210..be8723b 100644
+--- a/parquet-column/src/main/java/parquet/filter2/recordlevel/IncrementallyUpdatedFilterPredicateBuilderBase.java
++++ b/parquet-column/src/main/java/parquet/filter2/recordlevel/IncrementallyUpdatedFilterPredicateBuilderBase.java
+@@ -23,7 +23,7 @@ import java.util.HashMap;
+ import java.util.List;
+ import java.util.Map;
+ 
+-import parquet.common.schema.ColumnPath;
++import parquet.hadoop.metadata.ColumnPath;
+ import parquet.filter2.predicate.FilterPredicate;
+ import parquet.filter2.predicate.FilterPredicate.Visitor;
+ import parquet.filter2.predicate.Operators.And;
+diff --git a/parquet-column/src/test/java/parquet/filter2/predicate/TestFilterApiMethods.java b/parquet-column/src/test/java/parquet/filter2/predicate/TestFilterApiMethods.java
+index 849d946..5e8d197 100644
+--- a/parquet-column/src/test/java/parquet/filter2/predicate/TestFilterApiMethods.java
++++ b/parquet-column/src/test/java/parquet/filter2/predicate/TestFilterApiMethods.java
+@@ -26,7 +26,7 @@ import java.io.Serializable;
+ 
+ import org.junit.Test;
+ 
+-import parquet.common.schema.ColumnPath;
++import parquet.hadoop.metadata.ColumnPath;
+ import parquet.filter2.predicate.Operators.And;
+ import parquet.filter2.predicate.Operators.BinaryColumn;
+ import parquet.filter2.predicate.Operators.DoubleColumn;
+diff --git a/parquet-column/src/test/java/parquet/filter2/predicate/TestValidTypeMap.java b/parquet-column/src/test/java/parquet/filter2/predicate/TestValidTypeMap.java
+index 55c13a4..2daf143 100644
+--- a/parquet-column/src/test/java/parquet/filter2/predicate/TestValidTypeMap.java
++++ b/parquet-column/src/test/java/parquet/filter2/predicate/TestValidTypeMap.java
+@@ -20,7 +20,7 @@ package parquet.filter2.predicate;
+ 
+ import org.junit.Test;
+ 
+-import parquet.common.schema.ColumnPath;
++import parquet.hadoop.metadata.ColumnPath;
+ import parquet.filter2.predicate.Operators.BinaryColumn;
+ import parquet.filter2.predicate.Operators.BooleanColumn;
+ import parquet.filter2.predicate.Operators.Column;
+diff --git a/parquet-common/src/main/java/parquet/common/internal/Canonicalizer.java b/parquet-common/src/main/java/parquet/common/internal/Canonicalizer.java
+deleted file mode 100644
+index e67d936..0000000
+--- a/parquet-common/src/main/java/parquet/common/internal/Canonicalizer.java
++++ /dev/null
+@@ -1,62 +0,0 @@
+-/* 
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- * 
+- *   http://www.apache.org/licenses/LICENSE-2.0
+- * 
+- * Unless required by applicable law or agreed to in writing,
+- * software distributed under the License is distributed on an
+- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+- * KIND, either express or implied.  See the License for the
+- * specific language governing permissions and limitations
+- * under the License.
+- */
+-package parquet.common.internal;
+-
+-import java.util.concurrent.ConcurrentHashMap;
+-
+-/**
+- * returns canonical representation of objects (similar to String.intern()) to save memory
+- * if a.equals(b) then canonicalize(a) == canonicalize(b)
+- * this class is thread safe
+- * @author Julien Le Dem
+- *
+- * @param <T>
+- */
+-public class Canonicalizer<T> {
+-
+-  private ConcurrentHashMap<T, T> canonicals = new ConcurrentHashMap<T, T>();
+-
+-  /**
+-   * @param value the value to canonicalize
+-   * @return the corresponding canonical value
+-   */
+-  final public T canonicalize(T value) {
+-    T canonical = canonicals.get(value);
+-    if (canonical == null) {
+-      value = toCanonical(value);
+-      T existing = canonicals.putIfAbsent(value, value);
+-      // putIfAbsent is atomic, making sure we always return the same canonical representation of the value
+-      if (existing == null) {
+-        canonical = value;
+-      } else {
+-        canonical = existing;
+-      }
+-    }
+-    return canonical;
+-  }
+-
+-  /**
+-   * @param value the value to canonicalize if needed
+-   * @return the canonicalized value
+-   */
+-  protected T toCanonical(T value) {
+-    return value;
+-  }
+-}
+-
+diff --git a/parquet-common/src/main/java/parquet/common/schema/ColumnPath.java b/parquet-common/src/main/java/parquet/common/schema/ColumnPath.java
+deleted file mode 100644
+index cb0d304..0000000
+--- a/parquet-common/src/main/java/parquet/common/schema/ColumnPath.java
++++ /dev/null
+@@ -1,99 +0,0 @@
+-/* 
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- * 
+- *   http://www.apache.org/licenses/LICENSE-2.0
+- * 
+- * Unless required by applicable law or agreed to in writing,
+- * software distributed under the License is distributed on an
+- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+- * KIND, either express or implied.  See the License for the
+- * specific language governing permissions and limitations
+- * under the License.
+- */
+-package parquet.common.schema;
+-
+-import java.io.Serializable;
+-import java.util.Arrays;
+-import java.util.Iterator;
+-
+-import parquet.common.internal.Canonicalizer;
+-
+-import static parquet.Preconditions.checkNotNull;
+-
+-public final class ColumnPath implements Iterable<String>, Serializable {
+-
+-  private static Canonicalizer<ColumnPath> paths = new Canonicalizer<ColumnPath>() {
+-    @Override
+-    protected ColumnPath toCanonical(ColumnPath value) {
+-      String[] path = new String[value.p.length];
+-      for (int i = 0; i < value.p.length; i++) {
+-        path[i] = value.p[i].intern();
+-      }
+-      return new ColumnPath(path);
+-    }
+-  };
+-
+-  public static ColumnPath fromDotString(String path) {
+-    checkNotNull(path, "path");
+-    return get(path.split("\\."));
+-  }
+-
+-  public static ColumnPath get(String... path){
+-    return paths.canonicalize(new ColumnPath(path));
+-  }
+-
+-  private final String[] p;
+-
+-  private ColumnPath(String[] path) {
+-    this.p = path;
+-  }
+-
+-  @Override
+-  public boolean equals(Object obj) {
+-    if (obj instanceof ColumnPath) {
+-      return Arrays.equals(p, ((ColumnPath)obj).p);
+-    }
+-    return false;
+-  }
+-
+-  @Override
+-  public int hashCode() {
+-    return Arrays.hashCode(p);
+-  }
+-
+-  public String toDotString() {
+-    Iterator<String> iter = Arrays.asList(p).iterator();
+-    StringBuilder sb = new StringBuilder();
+-    while (iter.hasNext()) {
+-      sb.append(iter.next());
+-      if (iter.hasNext()) {
+-        sb.append('.');
+-      }
+-    }
+-    return sb.toString();
+-  }
+-
+-  @Override
+-  public String toString() {
+-    return Arrays.toString(p);
+-  }
+-
+-  @Override
+-  public Iterator<String> iterator() {
+-    return Arrays.asList(p).iterator();
+-  }
+-
+-  public int size() {
+-    return p.length;
+-  }
+-
+-  public String[] toArray() {
+-    return p;
+-  }
+-}
+diff --git a/parquet-common/src/main/java/parquet/hadoop/metadata/Canonicalizer.java b/parquet-common/src/main/java/parquet/hadoop/metadata/Canonicalizer.java
+new file mode 100644
+index 0000000..8208252
+--- /dev/null
++++ b/parquet-common/src/main/java/parquet/hadoop/metadata/Canonicalizer.java
+@@ -0,0 +1,62 @@
++/* 
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ * 
++ *   http://www.apache.org/licenses/LICENSE-2.0
++ * 
++ * Unless required by applicable law or agreed to in writing,
++ * software distributed under the License is distributed on an
++ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++ * KIND, either express or implied.  See the License for the
++ * specific language governing permissions and limitations
++ * under the License.
++ */
++package parquet.hadoop.metadata;
++
++import java.util.concurrent.ConcurrentHashMap;
++
++/**
++ * returns canonical representation of objects (similar to String.intern()) to save memory
++ * if a.equals(b) then canonicalize(a) == canonicalize(b)
++ * this class is thread safe
++ * @author Julien Le Dem
++ *
++ * @param <T>
++ */
++public class Canonicalizer<T> {
++
++  private ConcurrentHashMap<T, T> canonicals = new ConcurrentHashMap<T, T>();
++
++  /**
++   * @param value the value to canonicalize
++   * @return the corresponding canonical value
++   */
++  final public T canonicalize(T value) {
++    T canonical = canonicals.get(value);
++    if (canonical == null) {
++      value = toCanonical(value);
++      T existing = canonicals.putIfAbsent(value, value);
++      // putIfAbsent is atomic, making sure we always return the same canonical representation of the value
++      if (existing == null) {
++        canonical = value;
++      } else {
++        canonical = existing;
++      }
++    }
++    return canonical;
++  }
++
++  /**
++   * @param value the value to canonicalize if needed
++   * @return the canonicalized value
++   */
++  protected T toCanonical(T value) {
++    return value;
++  }
++}
++
+diff --git a/parquet-common/src/main/java/parquet/hadoop/metadata/ColumnPath.java b/parquet-common/src/main/java/parquet/hadoop/metadata/ColumnPath.java
+new file mode 100644
+index 0000000..13375f6
+--- /dev/null
++++ b/parquet-common/src/main/java/parquet/hadoop/metadata/ColumnPath.java
+@@ -0,0 +1,97 @@
++/* 
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ * 
++ *   http://www.apache.org/licenses/LICENSE-2.0
++ * 
++ * Unless required by applicable law or agreed to in writing,
++ * software distributed under the License is distributed on an
++ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++ * KIND, either express or implied.  See the License for the
++ * specific language governing permissions and limitations
++ * under the License.
++ */
++package parquet.hadoop.metadata;
++
++import java.io.Serializable;
++import java.util.Arrays;
++import java.util.Iterator;
++
++import static parquet.Preconditions.checkNotNull;
++
++public final class ColumnPath implements Iterable<String>, Serializable {
++
++  private static Canonicalizer<ColumnPath> paths = new Canonicalizer<ColumnPath>() {
++    @Override
++    protected ColumnPath toCanonical(ColumnPath value) {
++      String[] path = new String[value.p.length];
++      for (int i = 0; i < value.p.length; i++) {
++        path[i] = value.p[i].intern();
++      }
++      return new ColumnPath(path);
++    }
++  };
++
++  public static ColumnPath fromDotString(String path) {
++    checkNotNull(path, "path");
++    return get(path.split("\\."));
++  }
++
++  public static ColumnPath get(String... path){
++    return paths.canonicalize(new ColumnPath(path));
++  }
++
++  private final String[] p;
++
++  private ColumnPath(String[] path) {
++    this.p = path;
++  }
++
++  @Override
++  public boolean equals(Object obj) {
++    if (obj instanceof ColumnPath) {
++      return Arrays.equals(p, ((ColumnPath)obj).p);
++    }
++    return false;
++  }
++
++  @Override
++  public int hashCode() {
++    return Arrays.hashCode(p);
++  }
++
++  public String toDotString() {
++    Iterator<String> iter = Arrays.asList(p).iterator();
++    StringBuilder sb = new StringBuilder();
++    while (iter.hasNext()) {
++      sb.append(iter.next());
++      if (iter.hasNext()) {
++        sb.append('.');
++      }
++    }
++    return sb.toString();
++  }
++
++  @Override
++  public String toString() {
++    return Arrays.toString(p);
++  }
++
++  @Override
++  public Iterator<String> iterator() {
++    return Arrays.asList(p).iterator();
++  }
++
++  public int size() {
++    return p.length;
++  }
++
++  public String[] toArray() {
++    return p;
++  }
++}
+diff --git a/parquet-generator/src/main/java/parquet/filter2/IncrementallyUpdatedFilterPredicateGenerator.java b/parquet-generator/src/main/java/parquet/filter2/IncrementallyUpdatedFilterPredicateGenerator.java
+index 123be77..9a705de 100644
+--- a/parquet-generator/src/main/java/parquet/filter2/IncrementallyUpdatedFilterPredicateGenerator.java
++++ b/parquet-generator/src/main/java/parquet/filter2/IncrementallyUpdatedFilterPredicateGenerator.java
+@@ -68,7 +68,7 @@ public class IncrementallyUpdatedFilterPredicateGenerator {
+   public void run() throws IOException {
+     add("package parquet.filter2.recordlevel;\n" +
+         "\n" +
+-        "import parquet.common.schema.ColumnPath;\n" +
++        "import parquet.hadoop.metadata.ColumnPath;\n" +
+         "import parquet.filter2.predicate.Operators.Eq;\n" +
+         "import parquet.filter2.predicate.Operators.Gt;\n" +
+         "import parquet.filter2.predicate.Operators.GtEq;\n" +
+diff --git a/parquet-hadoop/src/main/java/parquet/filter2/statisticslevel/StatisticsFilter.java b/parquet-hadoop/src/main/java/parquet/filter2/statisticslevel/StatisticsFilter.java
+index d6a484c..7a7cd06 100644
+--- a/parquet-hadoop/src/main/java/parquet/filter2/statisticslevel/StatisticsFilter.java
++++ b/parquet-hadoop/src/main/java/parquet/filter2/statisticslevel/StatisticsFilter.java
+@@ -23,7 +23,7 @@ import java.util.List;
+ import java.util.Map;
+ 
+ import parquet.column.statistics.Statistics;
+-import parquet.common.schema.ColumnPath;
++import parquet.hadoop.metadata.ColumnPath;
+ import parquet.filter2.predicate.FilterPredicate;
+ import parquet.filter2.predicate.Operators.And;
+ import parquet.filter2.predicate.Operators.Column;
+diff --git a/parquet-hadoop/src/main/java/parquet/format/converter/ParquetMetadataConverter.java b/parquet-hadoop/src/main/java/parquet/format/converter/ParquetMetadataConverter.java
+index aa58727..d763882 100644
+--- a/parquet-hadoop/src/main/java/parquet/format/converter/ParquetMetadataConverter.java
++++ b/parquet-hadoop/src/main/java/parquet/format/converter/ParquetMetadataConverter.java
+@@ -36,7 +36,7 @@ import java.util.Map.Entry;
+ import java.util.Set;
+ 
+ import parquet.Log;
+-import parquet.common.schema.ColumnPath;
++import parquet.hadoop.metadata.ColumnPath;
+ import parquet.format.ColumnChunk;
+ import parquet.format.ColumnMetaData;
+ import parquet.format.ConvertedType;
+diff --git a/parquet-hadoop/src/main/java/parquet/hadoop/ParquetFileReader.java b/parquet-hadoop/src/main/java/parquet/hadoop/ParquetFileReader.java
+index 99f52c8..5b0b341 100644
+--- a/parquet-hadoop/src/main/java/parquet/hadoop/ParquetFileReader.java
++++ b/parquet-hadoop/src/main/java/parquet/hadoop/ParquetFileReader.java
+@@ -61,7 +61,7 @@ import parquet.column.page.DataPageV1;
+ import parquet.column.page.DataPageV2;
+ import parquet.column.page.DictionaryPage;
+ import parquet.column.page.PageReadStore;
+-import parquet.common.schema.ColumnPath;
++import parquet.hadoop.metadata.ColumnPath;
+ import parquet.format.DataPageHeader;
+ import parquet.format.DataPageHeaderV2;
+ import parquet.format.DictionaryPageHeader;
+diff --git a/parquet-hadoop/src/main/java/parquet/hadoop/ParquetFileWriter.java b/parquet-hadoop/src/main/java/parquet/hadoop/ParquetFileWriter.java
+index 10661e6..394bbc1 100644
+--- a/parquet-hadoop/src/main/java/parquet/hadoop/ParquetFileWriter.java
++++ b/parquet-hadoop/src/main/java/parquet/hadoop/ParquetFileWriter.java
+@@ -43,7 +43,7 @@ import parquet.bytes.BytesUtils;
+ import parquet.column.ColumnDescriptor;
+ import parquet.column.page.DictionaryPage;
+ import parquet.column.statistics.Statistics;
+-import parquet.common.schema.ColumnPath;
++import parquet.hadoop.metadata.ColumnPath;
+ import parquet.format.converter.ParquetMetadataConverter;
+ import parquet.hadoop.metadata.BlockMetaData;
+ import parquet.hadoop.metadata.ColumnChunkMetaData;
+diff --git a/parquet-hadoop/src/main/java/parquet/hadoop/metadata/ColumnChunkMetaData.java b/parquet-hadoop/src/main/java/parquet/hadoop/metadata/ColumnChunkMetaData.java
+index 3fe436e..d58bd28 100644
+--- a/parquet-hadoop/src/main/java/parquet/hadoop/metadata/ColumnChunkMetaData.java
++++ b/parquet-hadoop/src/main/java/parquet/hadoop/metadata/ColumnChunkMetaData.java
+@@ -23,7 +23,6 @@ import java.util.Set;
+ import parquet.column.Encoding;
+ import parquet.column.statistics.BooleanStatistics;
+ import parquet.column.statistics.Statistics;
+-import parquet.common.schema.ColumnPath;
+ import parquet.schema.PrimitiveType.PrimitiveTypeName;
+ 
+ /**
+diff --git a/parquet-hadoop/src/main/java/parquet/hadoop/metadata/ColumnChunkProperties.java b/parquet-hadoop/src/main/java/parquet/hadoop/metadata/ColumnChunkProperties.java
+index a1e1398..5548b68 100644
+--- a/parquet-hadoop/src/main/java/parquet/hadoop/metadata/ColumnChunkProperties.java
++++ b/parquet-hadoop/src/main/java/parquet/hadoop/metadata/ColumnChunkProperties.java
+@@ -22,8 +22,6 @@ import java.util.Arrays;
+ import java.util.Set;
+ 
+ import parquet.column.Encoding;
+-import parquet.common.internal.Canonicalizer;
+-import parquet.common.schema.ColumnPath;
+ import parquet.schema.PrimitiveType.PrimitiveTypeName;
+ 
+ public class ColumnChunkProperties {
+diff --git a/parquet-hadoop/src/main/java/parquet/hadoop/metadata/EncodingList.java b/parquet-hadoop/src/main/java/parquet/hadoop/metadata/EncodingList.java
+index bb3e9e0..df40c0e 100644
+--- a/parquet-hadoop/src/main/java/parquet/hadoop/metadata/EncodingList.java
++++ b/parquet-hadoop/src/main/java/parquet/hadoop/metadata/EncodingList.java
+@@ -23,7 +23,6 @@ import java.util.Iterator;
+ import java.util.List;
+ 
+ import parquet.column.Encoding;
+-import parquet.common.internal.Canonicalizer;
+ 
+ public class EncodingList implements Iterable<Encoding> {
+ 
+diff --git a/parquet-hadoop/src/test/java/parquet/filter2/statisticslevel/TestStatisticsFilter.java b/parquet-hadoop/src/test/java/parquet/filter2/statisticslevel/TestStatisticsFilter.java
+index d558f9b..f4e7e91 100644
+--- a/parquet-hadoop/src/test/java/parquet/filter2/statisticslevel/TestStatisticsFilter.java
++++ b/parquet-hadoop/src/test/java/parquet/filter2/statisticslevel/TestStatisticsFilter.java
+@@ -27,7 +27,7 @@ import org.junit.Test;
+ import parquet.column.Encoding;
+ import parquet.column.statistics.DoubleStatistics;
+ import parquet.column.statistics.IntStatistics;
+-import parquet.common.schema.ColumnPath;
++import parquet.hadoop.metadata.ColumnPath;
+ import parquet.filter2.predicate.FilterPredicate;
+ import parquet.filter2.predicate.LogicalInverseRewriter;
+ import parquet.filter2.predicate.Operators.DoubleColumn;
+diff --git a/parquet-hadoop/src/test/java/parquet/hadoop/TestInputFormat.java b/parquet-hadoop/src/test/java/parquet/hadoop/TestInputFormat.java
+index 69deeef..c628e54 100644
+--- a/parquet-hadoop/src/test/java/parquet/hadoop/TestInputFormat.java
++++ b/parquet-hadoop/src/test/java/parquet/hadoop/TestInputFormat.java
+@@ -53,7 +53,7 @@ import parquet.column.ColumnReader;
+ import parquet.column.Encoding;
+ import parquet.column.statistics.BinaryStatistics;
+ import parquet.column.statistics.IntStatistics;
+-import parquet.common.schema.ColumnPath;
++import parquet.hadoop.metadata.ColumnPath;
+ import parquet.filter.RecordFilter;
+ import parquet.filter.UnboundRecordFilter;
+ import parquet.filter2.compat.FilterCompat;
+diff --git a/parquet-hadoop/src/test/java/parquet/hadoop/metadata/TestColumnChunkMetaData.java b/parquet-hadoop/src/test/java/parquet/hadoop/metadata/TestColumnChunkMetaData.java
+index c912043..022e6c7 100644
+--- a/parquet-hadoop/src/test/java/parquet/hadoop/metadata/TestColumnChunkMetaData.java
++++ b/parquet-hadoop/src/test/java/parquet/hadoop/metadata/TestColumnChunkMetaData.java
+@@ -25,7 +25,6 @@ import org.junit.Test;
+ 
+ import parquet.column.Encoding;
+ import parquet.column.statistics.BinaryStatistics;
+-import parquet.common.schema.ColumnPath;
+ import parquet.schema.PrimitiveType.PrimitiveTypeName;
+ 
+ import static org.junit.Assert.assertEquals;
+diff --git a/pom.xml b/pom.xml
+index 2d346e1..7923cd4 100644
+--- a/pom.xml
++++ b/pom.xml
+@@ -142,7 +142,7 @@
+     <cascading.version>2.5.3</cascading.version>
+     <parquet.format.version>${cdh.parquet-format.version}</parquet.format.version>
+     <log4j.version>1.2.17</log4j.version>
+-    <previous.version>1.2.5-cdh5.5.0-SNAPSHOT</previous.version>
++    <previous.version>1.5.0</previous.version>
+     <thrift.executable>thrift</thrift.executable>
+     <protoc.executable>protoc</protoc.executable>
+     <pig.version>${cdh.pig.version}</pig.version>
+@@ -282,6 +282,10 @@
+                      <exclude>parquet/column/values/**</exclude>
+                      <exclude>parquet/column/**</exclude>
+                      <exclude>parquet/hadoop/ParquetInputSplit</exclude>
++                     <!-- temporary rules -->
++                     <exclude>parquet/io/api/Binary</exclude> <!-- false positive, added interfaces -->
++                     <exclude>parquet/hadoop/metadata/Canonicalizer</exclude> <!-- moved to different module -->
++                     <exclude>parquet/hadoop/metadata/ColumnPath</exclude> <!-- moved to different module, added methods -->
+                    </excludes>
+                  </requireBackwardCompatibility>
+                </rules>
+-- 
+1.7.9.5
+

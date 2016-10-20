@@ -1,0 +1,392 @@
+From c578c669e2f5f653f8bf096ae4b06e924d398449 Mon Sep 17 00:00:00 2001
+From: Ryan Blue <blue@apache.org>
+Date: Wed, 23 Sep 2015 09:45:02 -0700
+Subject: [PATCH 171/176] PARQUET-372: Do not write stats larger than 4k.
+
+This updates the stats conversion to check whether the min and max
+values for page stats are larger than 4k. If so, no statistics for a
+page are written.
+
+Conflicts:
+	parquet-hadoop/src/test/java/parquet/format/converter/TestParquetMetadataConverter.java
+Resolution:
+    Fixed package names.
+---
+ .../column/statistics/BinaryStatistics.java        |   25 +++
+ .../column/statistics/BooleanStatistics.java       |    5 +
+ .../column/statistics/DoubleStatistics.java        |    5 +
+ .../parquet/column/statistics/FloatStatistics.java |    5 +
+ .../parquet/column/statistics/IntStatistics.java   |    5 +
+ .../parquet/column/statistics/LongStatistics.java  |    5 +
+ .../java/parquet/column/statistics/Statistics.java |    8 +
+ .../format/converter/ParquetMetadataConverter.java |    3 +-
+ .../converter/TestParquetMetadataConverter.java    |  159 +++++++++++++++++++-
+ 9 files changed, 218 insertions(+), 2 deletions(-)
+
+diff --git a/parquet-column/src/main/java/parquet/column/statistics/BinaryStatistics.java b/parquet-column/src/main/java/parquet/column/statistics/BinaryStatistics.java
+index e0e1f1c..90e68ab 100644
+--- a/parquet-column/src/main/java/parquet/column/statistics/BinaryStatistics.java
++++ b/parquet-column/src/main/java/parquet/column/statistics/BinaryStatistics.java
+@@ -68,6 +68,11 @@ public class BinaryStatistics extends Statistics<Binary> {
+   }
+ 
+   @Override
++  public boolean isSmallerThan(long size) {
++    return !hasNonNullValue() || ((min.length() + max.length()) < size);
++  }
++
++  @Override
+   public String toString() {
+     if (this.hasNonNullValue())
+       return String.format("min: %s, max: %s, num_nulls: %d", min.toStringUsingUTF8(), max.toStringUsingUTF8(), this.getNumNulls());
+@@ -77,11 +82,19 @@ public class BinaryStatistics extends Statistics<Binary> {
+       return "no stats for this column";
+   }
+ 
++  /**
++   * @deprecated use {@link #updateStats(Binary)}, will be removed in 2.0.0
++   */
++  @Deprecated
+   public void updateStats(Binary min_value, Binary max_value) {
+     if (min.compareTo(min_value) > 0) { min = min_value.copy(); }
+     if (max.compareTo(max_value) < 0) { max = max_value.copy(); }
+   }
+ 
++  /**
++   * @deprecated use {@link #updateStats(Binary)}, will be removed in 2.0.0
++   */
++  @Deprecated
+   public void initializeStats(Binary min_value, Binary max_value) {
+       min = min_value.copy();
+       max = max_value.copy();
+@@ -98,14 +111,26 @@ public class BinaryStatistics extends Statistics<Binary> {
+     return max;
+   }
+ 
++  /**
++   * @deprecated use {@link #genericGetMax()}, will be removed in 2.0.0
++   */
++  @Deprecated
+   public Binary getMax() {
+     return max;
+   }
+ 
++  /**
++   * @deprecated use {@link #genericGetMin()}, will be removed in 2.0.0
++   */
++  @Deprecated
+   public Binary getMin() {
+     return min;
+   }
+ 
++  /**
++   * @deprecated use {@link #updateStats(Binary)}, will be removed in 2.0.0
++   */
++  @Deprecated
+   public void setMinMax(Binary min, Binary max) {
+     this.max = max;
+     this.min = min;
+diff --git a/parquet-column/src/main/java/parquet/column/statistics/BooleanStatistics.java b/parquet-column/src/main/java/parquet/column/statistics/BooleanStatistics.java
+index 663dc8d..35f7184 100644
+--- a/parquet-column/src/main/java/parquet/column/statistics/BooleanStatistics.java
++++ b/parquet-column/src/main/java/parquet/column/statistics/BooleanStatistics.java
+@@ -62,6 +62,11 @@ public class BooleanStatistics extends Statistics<Boolean> {
+   }
+ 
+   @Override
++  public boolean isSmallerThan(long size) {
++    return !hasNonNullValue() || (2 < size);
++  }
++
++  @Override
+   public String toString() {
+     if (this.hasNonNullValue())
+       return String.format("min: %b, max: %b, num_nulls: %d", min, max, this.getNumNulls());
+diff --git a/parquet-column/src/main/java/parquet/column/statistics/DoubleStatistics.java b/parquet-column/src/main/java/parquet/column/statistics/DoubleStatistics.java
+index 8abf466..73114b4 100644
+--- a/parquet-column/src/main/java/parquet/column/statistics/DoubleStatistics.java
++++ b/parquet-column/src/main/java/parquet/column/statistics/DoubleStatistics.java
+@@ -62,6 +62,11 @@ public class DoubleStatistics extends Statistics<Double> {
+   }
+ 
+   @Override
++  public boolean isSmallerThan(long size) {
++    return !hasNonNullValue() || (16 < size);
++  }
++
++  @Override
+   public String toString() {
+     if(this.hasNonNullValue())
+       return String.format("min: %.5f, max: %.5f, num_nulls: %d", min, max, this.getNumNulls());
+diff --git a/parquet-column/src/main/java/parquet/column/statistics/FloatStatistics.java b/parquet-column/src/main/java/parquet/column/statistics/FloatStatistics.java
+index 9f1e449..6f9d34d 100644
+--- a/parquet-column/src/main/java/parquet/column/statistics/FloatStatistics.java
++++ b/parquet-column/src/main/java/parquet/column/statistics/FloatStatistics.java
+@@ -62,6 +62,11 @@ public class FloatStatistics extends Statistics<Float> {
+   }
+ 
+   @Override
++  public boolean isSmallerThan(long size) {
++    return !hasNonNullValue() || (8 < size);
++  }
++
++  @Override
+   public String toString() {
+     if (this.hasNonNullValue())
+       return String.format("min: %.5f, max: %.5f, num_nulls: %d", min, max, this.getNumNulls());
+diff --git a/parquet-column/src/main/java/parquet/column/statistics/IntStatistics.java b/parquet-column/src/main/java/parquet/column/statistics/IntStatistics.java
+index eadc563..4853c49 100644
+--- a/parquet-column/src/main/java/parquet/column/statistics/IntStatistics.java
++++ b/parquet-column/src/main/java/parquet/column/statistics/IntStatistics.java
+@@ -62,6 +62,11 @@ public class IntStatistics extends Statistics<Integer> {
+   }
+ 
+   @Override
++  public boolean isSmallerThan(long size) {
++    return !hasNonNullValue() || (8 < size);
++  }
++
++  @Override
+   public String toString() {
+     if (this.hasNonNullValue())
+       return String.format("min: %d, max: %d, num_nulls: %d", min, max, this.getNumNulls());
+diff --git a/parquet-column/src/main/java/parquet/column/statistics/LongStatistics.java b/parquet-column/src/main/java/parquet/column/statistics/LongStatistics.java
+index 3797566..3c9016c 100644
+--- a/parquet-column/src/main/java/parquet/column/statistics/LongStatistics.java
++++ b/parquet-column/src/main/java/parquet/column/statistics/LongStatistics.java
+@@ -62,6 +62,11 @@ public class LongStatistics extends Statistics<Long> {
+   }
+ 
+   @Override
++  public boolean isSmallerThan(long size) {
++    return !hasNonNullValue() || (16 < size);
++  }
++
++  @Override
+   public String toString() {
+     if (this.hasNonNullValue())
+       return String.format("min: %d, max: %d, num_nulls: %d", min, max, this.getNumNulls());
+diff --git a/parquet-column/src/main/java/parquet/column/statistics/Statistics.java b/parquet-column/src/main/java/parquet/column/statistics/Statistics.java
+index ff11bfd..91df286 100644
+--- a/parquet-column/src/main/java/parquet/column/statistics/Statistics.java
++++ b/parquet-column/src/main/java/parquet/column/statistics/Statistics.java
+@@ -191,6 +191,14 @@ public abstract class Statistics<T extends Comparable<T>> {
+   abstract public byte[] getMinBytes();
+ 
+   /**
++   * Abstract method to return whether the min and max values fit in the given
++   * size.
++   * @param size a size in bytes
++   * @return true iff the min and max values are less than size bytes
++   */
++  abstract public boolean isSmallerThan(long size);
++
++  /**
+    * toString() to display min, max, num_nulls in a string
+    */
+   abstract public String toString();
+diff --git a/parquet-hadoop/src/main/java/parquet/format/converter/ParquetMetadataConverter.java b/parquet-hadoop/src/main/java/parquet/format/converter/ParquetMetadataConverter.java
+index 592ef6b..d09e232 100644
+--- a/parquet-hadoop/src/main/java/parquet/format/converter/ParquetMetadataConverter.java
++++ b/parquet-hadoop/src/main/java/parquet/format/converter/ParquetMetadataConverter.java
+@@ -75,6 +75,7 @@ public class ParquetMetadataConverter {
+ 
+   public static final MetadataFilter NO_FILTER = new NoFilter();
+   public static final MetadataFilter SKIP_ROW_GROUPS = new SkipMetadataFilter();
++  public static final long MAX_STATS_SIZE = 4096; // limit stats to 4k
+ 
+   private static final Log LOG = Log.getLog(ParquetMetadataConverter.class);
+ 
+@@ -263,7 +264,7 @@ public class ParquetMetadataConverter {
+   public static Statistics toParquetStatistics(
+       parquet.column.statistics.Statistics statistics) {
+     Statistics stats = new Statistics();
+-    if (!statistics.isEmpty()) {
++    if (!statistics.isEmpty() && statistics.isSmallerThan(MAX_STATS_SIZE)) {
+       stats.setNull_count(statistics.getNumNulls());
+       if (statistics.hasNonNullValue()) {
+         stats.setMax(statistics.getMaxBytes());
+diff --git a/parquet-hadoop/src/test/java/parquet/format/converter/TestParquetMetadataConverter.java b/parquet-hadoop/src/test/java/parquet/format/converter/TestParquetMetadataConverter.java
+index 4af9aee..6bb426e 100644
+--- a/parquet-hadoop/src/test/java/parquet/format/converter/TestParquetMetadataConverter.java
++++ b/parquet-hadoop/src/test/java/parquet/format/converter/TestParquetMetadataConverter.java
+@@ -43,12 +43,21 @@ import java.util.Random;
+ import java.util.Set;
+ import java.util.TreeSet;
+ 
++import parquet.Version;
++import parquet.bytes.BytesUtils;
+ import parquet.column.statistics.BinaryStatistics;
++import parquet.column.statistics.BooleanStatistics;
++import parquet.column.statistics.DoubleStatistics;
++import parquet.column.statistics.FloatStatistics;
++import parquet.column.statistics.IntStatistics;
++import parquet.column.statistics.LongStatistics;
++import parquet.column.statistics.Statistics;
+ import parquet.hadoop.metadata.BlockMetaData;
+ import parquet.hadoop.metadata.ColumnChunkMetaData;
+ import parquet.hadoop.metadata.ColumnPath;
+ import parquet.hadoop.metadata.CompressionCodecName;
+ import parquet.hadoop.metadata.ParquetMetadata;
++import parquet.io.api.Binary;
+ import org.junit.Assert;
+ import org.junit.Test;
+ 
+@@ -320,5 +329,153 @@ public class TestParquetMetadataConverter {
+     assertEquals("java.util.Collections$UnmodifiableSet", res1.getClass().getName());
+     assertEquals("java.util.Collections$UnmodifiableSet", res2.getClass().getName());
+     assertEquals("java.util.Collections$UnmodifiableSet", res3.getClass().getName());
+-  }  
++  }
++
++  @Test
++  public void testBinaryStats() {
++    // make fake stats and verify the size check
++    BinaryStatistics stats = new BinaryStatistics();
++    stats.incrementNumNulls(3004);
++    byte[] min = new byte[904];
++    byte[] max = new byte[2388];
++    stats.updateStats(Binary.fromConstantByteArray(min));
++    stats.updateStats(Binary.fromConstantByteArray(max));
++    long totalLen = min.length + max.length;
++    Assert.assertFalse("Should not be smaller than min + max size",
++        stats.isSmallerThan(totalLen));
++    Assert.assertTrue("Should be smaller than min + max size + 1",
++        stats.isSmallerThan(totalLen + 1));
++
++    parquet.format.Statistics formatStats =
++        ParquetMetadataConverter.toParquetStatistics(stats);
++
++    Assert.assertArrayEquals("Min should match", min, formatStats.getMin());
++    Assert.assertArrayEquals("Max should match", max, formatStats.getMax());
++    Assert.assertEquals("Num nulls should match",
++        3004, formatStats.getNull_count());
++
++    // convert to empty stats because the values are too large
++    stats.setMinMaxFromBytes(max, max);
++
++    formatStats = ParquetMetadataConverter.toParquetStatistics(stats);
++
++    Assert.assertFalse("Min should not be set", formatStats.isSetMin());
++    Assert.assertFalse("Max should not be set", formatStats.isSetMax());
++    Assert.assertFalse("Num nulls should not be set",
++        formatStats.isSetNull_count());
++
++    Statistics roundTripStats = ParquetMetadataConverter.fromParquetStatistics(
++        Version.FULL_VERSION, formatStats, PrimitiveTypeName.BINARY);
++
++    Assert.assertTrue(roundTripStats.isEmpty());
++  }
++
++  @Test
++  public void testIntegerStats() {
++    // make fake stats and verify the size check
++    IntStatistics stats = new IntStatistics();
++    stats.incrementNumNulls(3004);
++    int min = Integer.MIN_VALUE;
++    int max = Integer.MAX_VALUE;
++    stats.updateStats(min);
++    stats.updateStats(max);
++
++    parquet.format.Statistics formatStats =
++        ParquetMetadataConverter.toParquetStatistics(stats);
++
++    Assert.assertEquals("Min should match",
++        min, BytesUtils.bytesToInt(formatStats.getMin()));
++    Assert.assertEquals("Max should match",
++        max, BytesUtils.bytesToInt(formatStats.getMax()));
++    Assert.assertEquals("Num nulls should match",
++        3004, formatStats.getNull_count());
++  }
++
++  @Test
++  public void testLongStats() {
++    // make fake stats and verify the size check
++    LongStatistics stats = new LongStatistics();
++    stats.incrementNumNulls(3004);
++    long min = Long.MIN_VALUE;
++    long max = Long.MAX_VALUE;
++    stats.updateStats(min);
++    stats.updateStats(max);
++
++    parquet.format.Statistics formatStats =
++        ParquetMetadataConverter.toParquetStatistics(stats);
++
++    Assert.assertEquals("Min should match",
++        min, BytesUtils.bytesToLong(formatStats.getMin()));
++    Assert.assertEquals("Max should match",
++        max, BytesUtils.bytesToLong(formatStats.getMax()));
++    Assert.assertEquals("Num nulls should match",
++        3004, formatStats.getNull_count());
++  }
++
++  @Test
++  public void testFloatStats() {
++    // make fake stats and verify the size check
++    FloatStatistics stats = new FloatStatistics();
++    stats.incrementNumNulls(3004);
++    float min = Float.MIN_VALUE;
++    float max = Float.MAX_VALUE;
++    stats.updateStats(min);
++    stats.updateStats(max);
++
++    parquet.format.Statistics formatStats =
++        ParquetMetadataConverter.toParquetStatistics(stats);
++
++    Assert.assertEquals("Min should match",
++        min, Float.intBitsToFloat(BytesUtils.bytesToInt(formatStats.getMin())),
++        0.000001);
++    Assert.assertEquals("Max should match",
++        max, Float.intBitsToFloat(BytesUtils.bytesToInt(formatStats.getMax())),
++        0.000001);
++    Assert.assertEquals("Num nulls should match",
++        3004, formatStats.getNull_count());
++  }
++
++  @Test
++  public void testDoubleStats() {
++    // make fake stats and verify the size check
++    DoubleStatistics stats = new DoubleStatistics();
++    stats.incrementNumNulls(3004);
++    double min = Double.MIN_VALUE;
++    double max = Double.MAX_VALUE;
++    stats.updateStats(min);
++    stats.updateStats(max);
++
++    parquet.format.Statistics formatStats =
++        ParquetMetadataConverter.toParquetStatistics(stats);
++
++    Assert.assertEquals("Min should match",
++        min, Double.longBitsToDouble(BytesUtils.bytesToLong(formatStats.getMin())),
++        0.000001);
++    Assert.assertEquals("Max should match",
++        max, Double.longBitsToDouble(BytesUtils.bytesToLong(formatStats.getMax())),
++        0.000001);
++    Assert.assertEquals("Num nulls should match",
++        3004, formatStats.getNull_count());
++  }
++
++  @Test
++  public void testBooleanStats() {
++    // make fake stats and verify the size check
++    BooleanStatistics stats = new BooleanStatistics();
++    stats.incrementNumNulls(3004);
++    boolean min = Boolean.FALSE;
++    boolean max = Boolean.TRUE;
++    stats.updateStats(min);
++    stats.updateStats(max);
++
++    parquet.format.Statistics formatStats =
++        ParquetMetadataConverter.toParquetStatistics(stats);
++
++    Assert.assertEquals("Min should match",
++        min, BytesUtils.bytesToBool(formatStats.getMin()));
++    Assert.assertEquals("Max should match",
++        max, BytesUtils.bytesToBool(formatStats.getMax()));
++    Assert.assertEquals("Num nulls should match",
++        3004, formatStats.getNull_count());
++  }
+ }
+-- 
+1.7.9.5
+

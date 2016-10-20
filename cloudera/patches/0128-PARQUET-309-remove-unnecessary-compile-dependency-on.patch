@@ -1,0 +1,94 @@
+From 249ef724ba5d065028e7baf8373baddf839d4f54 Mon Sep 17 00:00:00 2001
+From: Konstantin Shaposhnikov <Konstantin.Shaposhnikov@sc.com>
+Date: Wed, 17 Jun 2015 16:24:27 -0700
+Subject: [PATCH 128/176] PARQUET-309: remove unnecessary compile dependency
+ on parquet-generator
+
+parquet-generator is build-time dependency only and shouldn't be listed in
+pom.xml dependencies section.
+
+Author: Konstantin Shaposhnikov <Konstantin.Shaposhnikov@sc.com>
+
+Closes #214 from kostya-sh/PARQUET-309 and squashes the following commits:
+
+9d224c1 [Konstantin Shaposhnikov] PARQUET-309: remove unnecessary compile dependency on parquet-generator
+
+Conflicts:
+	parquet-column/pom.xml
+	parquet-encoding/pom.xml
+Resolution:
+    Updated groupIds.
+---
+ parquet-column/pom.xml   |   10 +++++++++-
+ parquet-encoding/pom.xml |   13 ++++++++-----
+ 2 files changed, 17 insertions(+), 6 deletions(-)
+
+diff --git a/parquet-column/pom.xml b/parquet-column/pom.xml
+index de4f063..be0c7c6 100644
+--- a/parquet-column/pom.xml
++++ b/parquet-column/pom.xml
+@@ -118,6 +118,13 @@
+         <groupId>org.codehaus.mojo</groupId>
+         <artifactId>exec-maven-plugin</artifactId>
+         <version>1.2.1</version>
++        <dependencies>
++          <dependency>
++            <groupId>com.twitter</groupId>
++            <artifactId>parquet-generator</artifactId>
++            <version>${project.version}</version>
++          </dependency>
++        </dependencies>
+         <executions>
+           <execution>
+             <phase>generate-sources</phase>
+@@ -127,7 +134,8 @@
+           </execution>
+         </executions>
+         <configuration>
+-          <mainClass>parquet.filter2.Generator</mainClass>          
++          <mainClass>parquet.filter2.Generator</mainClass>
++          <includePluginDependencies>true</includePluginDependencies>
+           <arguments>
+             <argument>${basedir}/target/generated-src</argument>
+           </arguments>
+diff --git a/parquet-encoding/pom.xml b/parquet-encoding/pom.xml
+index d6e2539..f980625 100644
+--- a/parquet-encoding/pom.xml
++++ b/parquet-encoding/pom.xml
+@@ -42,11 +42,6 @@
+       <version>${project.version}</version>
+     </dependency>
+     <dependency>
+-      <groupId>com.twitter</groupId>
+-      <artifactId>parquet-generator</artifactId>
+-      <version>${project.version}</version>
+-    </dependency>
+-    <dependency>
+       <groupId>commons-codec</groupId>
+       <artifactId>commons-codec</artifactId>
+       <version>1.5</version>
+@@ -67,6 +62,13 @@
+         <groupId>org.codehaus.mojo</groupId>
+         <artifactId>exec-maven-plugin</artifactId>
+         <version>1.2.1</version>
++        <dependencies>
++          <dependency>
++            <groupId>com.twitter</groupId>
++            <artifactId>parquet-generator</artifactId>
++            <version>${project.version}</version>
++          </dependency>
++        </dependencies>
+         <executions>
+           <execution>
+             <phase>generate-sources</phase>
+@@ -77,6 +79,7 @@
+         </executions>
+         <configuration>
+           <mainClass>parquet.encoding.Generator</mainClass>          
++          <includePluginDependencies>true</includePluginDependencies>
+           <arguments>
+             <argument>${basedir}/target/generated-src</argument>
+           </arguments>
+-- 
+1.7.9.5
+

@@ -1,0 +1,39 @@
+From bee995851601da2d51c60206f7e280750d3ee052 Mon Sep 17 00:00:00 2001
+From: Ryan Blue <blue@apache.org>
+Date: Wed, 19 Aug 2015 14:45:35 -0700
+Subject: [PATCH 145/176] CLOUDERA-BUILD. Set Parquet max padding size to 8MB.
+
+---
+ .../java/parquet/hadoop/ParquetOutputFormat.java   |    2 +-
+ .../main/java/parquet/hadoop/ParquetWriter.java    |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/parquet-hadoop/src/main/java/parquet/hadoop/ParquetOutputFormat.java b/parquet-hadoop/src/main/java/parquet/hadoop/ParquetOutputFormat.java
+index 15d07b6..205c031 100644
+--- a/parquet-hadoop/src/main/java/parquet/hadoop/ParquetOutputFormat.java
++++ b/parquet-hadoop/src/main/java/parquet/hadoop/ParquetOutputFormat.java
+@@ -116,7 +116,7 @@ public class ParquetOutputFormat<T> extends FileOutputFormat<Void, T> {
+   public static final String MAX_PADDING_BYTES    = "parquet.writer.max-padding";
+ 
+   // default to no padding for now
+-  private static final int DEFAULT_MAX_PADDING_SIZE = 0;
++  private static final int DEFAULT_MAX_PADDING_SIZE = 8*1024*1024; // 8MB
+ 
+   public static void setWriteSupportClass(Job job,  Class<?> writeSupportClass) {
+     getConfiguration(job).set(WRITE_SUPPORT_CLASS, writeSupportClass.getName());
+diff --git a/parquet-hadoop/src/main/java/parquet/hadoop/ParquetWriter.java b/parquet-hadoop/src/main/java/parquet/hadoop/ParquetWriter.java
+index b292942..854f745 100644
+--- a/parquet-hadoop/src/main/java/parquet/hadoop/ParquetWriter.java
++++ b/parquet-hadoop/src/main/java/parquet/hadoop/ParquetWriter.java
+@@ -45,7 +45,7 @@ public class ParquetWriter<T> implements Closeable {
+       WriterVersion.PARQUET_1_0;
+ 
+   // max size (bytes) to write as padding and the min size of a row group
+-  public static final int MAX_PADDING_SIZE_DEFAULT = 0;
++  public static final int MAX_PADDING_SIZE_DEFAULT = 8*1024*1024; // 8MB
+ 
+   private final InternalParquetRecordWriter<T> writer;
+ 
+-- 
+1.7.9.5
+

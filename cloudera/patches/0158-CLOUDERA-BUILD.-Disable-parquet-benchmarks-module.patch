@@ -1,0 +1,28 @@
+From b5d5814c55fe5265bc0873a73aadceea4454ad5d Mon Sep 17 00:00:00 2001
+From: Ryan Blue <blue@apache.org>
+Date: Wed, 19 Aug 2015 20:16:45 -0700
+Subject: [PATCH 158/176] CLOUDERA-BUILD. Disable parquet-benchmarks module.
+
+This was backported to make other changes easier, but hasn't been part
+of CDH and isn't a client jar that should be added.
+---
+ pom.xml |    2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/pom.xml b/pom.xml
+index 5350bcc..103a74e 100644
+--- a/pom.xml
++++ b/pom.xml
+@@ -159,7 +159,9 @@
+ 
+   <modules>
+     <module>parquet-avro</module>
++    <!-- Added in backports
+     <module>parquet-benchmarks</module>
++    -->
+     <module>parquet-cascading</module>
+     <module>parquet-column</module>
+     <module>parquet-common</module>
+-- 
+1.7.9.5
+

@@ -1,0 +1,163 @@
+From 2596c02c59d85a705d477efdb5c7c290465dd4b8 Mon Sep 17 00:00:00 2001
+From: "Nalezenec, Lukas" <lukas.nalezenec@gmail.com>
+Date: Thu, 30 Apr 2015 12:33:56 +0200
+Subject: [PATCH 109/176] PARQUET-175 reading custom protobuf class
+
+ Changes to be committed:
+	modified:   parquet-protobuf/src/main/java/org/apache/parquet/proto/ProtoReadSupport.java
+	modified:   parquet-protobuf/src/test/java/org/apache/parquet/proto/ProtoInputOutputFormatTest.java
+	modified:   parquet-protobuf/src/test/resources/TestProtobuf.proto
+
+Author: Nalezenec, Lukas <lukas.nalezenec@gmail.com>
+
+Closes #183 from lukasnalezenec/master and squashes the following commits:
+
+796cd39 [Nalezenec, Lukas] PARQUET-175 Allow setting of a custom protobuf class when reading parquet file using parquet-protobuf.
+
+Conflicts:
+	parquet-protobuf/src/test/java/parquet/proto/ProtoInputOutputFormatTest.java
+Resolution:
+    Fixed imports.
+---
+ .../main/java/parquet/proto/ProtoReadSupport.java  |   24 ++++++++++---
+ .../parquet/proto/ProtoInputOutputFormatTest.java  |   36 +++++++++++++++++---
+ .../src/test/resources/TestProtobuf.proto          |   10 ++++++
+ 3 files changed, 61 insertions(+), 9 deletions(-)
+
+diff --git a/parquet-protobuf/src/main/java/parquet/proto/ProtoReadSupport.java b/parquet-protobuf/src/main/java/parquet/proto/ProtoReadSupport.java
+index f8a2e1d..3a6c464 100644
+--- a/parquet-protobuf/src/main/java/parquet/proto/ProtoReadSupport.java
++++ b/parquet-protobuf/src/main/java/parquet/proto/ProtoReadSupport.java
+@@ -46,6 +46,16 @@ public class ProtoReadSupport<T extends Message> extends ReadSupport<T> {
+     configuration.set(PB_REQUESTED_PROJECTION, requestedProjection);
+   }
+ 
++  /**
++   * Set name of protobuf class to be used for reading data.
++   * If no class is set, value from file header is used.
++   * Note that the value in header is present only if the file was written
++   * using parquet-protobuf project, it will fail otherwise.
++   * */
++  public static void setProtobufClass(Configuration configuration, String protobufClass) {
++    configuration.set(PB_CLASS, protobufClass);
++  }
++
+   @Override
+   public ReadContext init(InitContext context) {
+     String requestedProjectionString = context.getConfiguration().get(PB_REQUESTED_PROJECTION);
+@@ -63,16 +73,22 @@ public class ProtoReadSupport<T extends Message> extends ReadSupport<T> {
+ 
+   @Override
+   public RecordMaterializer<T> prepareForRead(Configuration configuration, Map<String, String> keyValueMetaData, MessageType fileSchema, ReadContext readContext) {
+-    String strProtoClass = keyValueMetaData.get(PB_CLASS);
++    String headerProtoClass = keyValueMetaData.get(PB_CLASS);
++    String configuredProtoClass = configuration.get(PB_CLASS);
++
++    if (configuredProtoClass != null) {
++      LOG.debug("Replacing class " + headerProtoClass + " by " + configuredProtoClass);
++      headerProtoClass = configuredProtoClass;
++    }
+ 
+-    if (strProtoClass == null) {
++    if (headerProtoClass == null) {
+       throw new RuntimeException("I Need parameter " + PB_CLASS + " with Protocol Buffer class");
+     }
+ 
+-    LOG.debug("Reading data with Protocol Buffer class" + strProtoClass);
++    LOG.debug("Reading data with Protocol Buffer class " + headerProtoClass);
+ 
+     MessageType requestedSchema = readContext.getRequestedSchema();
+-    Class<? extends Message> protobufClass = Protobufs.getProtobufClass(strProtoClass);
++    Class<? extends Message> protobufClass = Protobufs.getProtobufClass(headerProtoClass);
+     return new ProtoRecordMaterializer(requestedSchema, protobufClass);
+   }
+ 
+diff --git a/parquet-protobuf/src/test/java/parquet/proto/ProtoInputOutputFormatTest.java b/parquet-protobuf/src/test/java/parquet/proto/ProtoInputOutputFormatTest.java
+index f11e53f..c084ec4 100644
+--- a/parquet-protobuf/src/test/java/parquet/proto/ProtoInputOutputFormatTest.java
++++ b/parquet-protobuf/src/test/java/parquet/proto/ProtoInputOutputFormatTest.java
+@@ -19,24 +19,22 @@
+ package parquet.proto;
+ 
+ import com.google.protobuf.Message;
+-import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.Path;
+ import org.junit.Test;
+ import parquet.Log;
+ import parquet.proto.utils.ReadUsingMR;
+ import parquet.proto.utils.WriteUsingMR;
+ import parquet.proto.test.TestProtobuf;
++import parquet.proto.test.TestProtobuf.FirstCustomClassMessage;
++import parquet.proto.test.TestProtobuf.SecondCustomClassMessage;
+ 
+ import java.util.List;
+ 
+-import static org.junit.Assert.assertEquals;
+-import static org.junit.Assert.assertTrue;
++import static org.junit.Assert.*;
+ 
+ 
+ public class ProtoInputOutputFormatTest {
+ 
+-  private static final Log LOG = Log.getLog(ProtoInputOutputFormatTest.class);
+-
+   /**
+    * Writes Protocol Buffer using first MR job, reads written file using
+    * second job and compares input and output.
+@@ -96,6 +94,34 @@ public class ProtoInputOutputFormatTest {
+   }
+ 
+   /**
++   * When user specified protobuffer class in configuration,
++   * It should replace class specified in header.
++   * */
++  @Test
++  public void testCustomProtoClass() throws Exception {
++    FirstCustomClassMessage.Builder inputMessage;
++    inputMessage = FirstCustomClassMessage.newBuilder();
++    inputMessage.setString("writtenString");
++
++    Path outputPath = new WriteUsingMR().write(new Message[]{inputMessage.build()});
++    ReadUsingMR readUsingMR = new ReadUsingMR();
++    String customClass = SecondCustomClassMessage.class.getName();
++    ProtoReadSupport.setProtobufClass(readUsingMR.getConfiguration(), customClass);
++    List<Message> result = readUsingMR.read(outputPath);
++
++    assertEquals(1, result.size());
++    Message msg = result.get(0);
++    assertFalse("Class from header returned.",
++            msg instanceof FirstCustomClassMessage);
++    assertTrue("Custom class was not used",
++            msg instanceof SecondCustomClassMessage);
++
++    String stringValue;
++    stringValue = ((SecondCustomClassMessage) msg).getString();
++    assertEquals("writtenString", stringValue);
++  }
++
++  /**
+    * Runs job that writes input to file and then job reading data back.
+    */
+   public static List<Message> runMRJobs(Message... messages) throws Exception {
+diff --git a/parquet-protobuf/src/test/resources/TestProtobuf.proto b/parquet-protobuf/src/test/resources/TestProtobuf.proto
+index e4204ac..72bced8 100644
+--- a/parquet-protobuf/src/test/resources/TestProtobuf.proto
++++ b/parquet-protobuf/src/test/resources/TestProtobuf.proto
+@@ -126,4 +126,14 @@ message HighIndexMessage {
+     repeated int32 repeatedInt = 50000;
+ }
+ 
++//custom proto class - ProtoInputOutputFormatTest
++
++message FirstCustomClassMessage {
++    optional string string = 11;
++}
++
++message SecondCustomClassMessage {
++    optional string string = 11;
++}
++
+ //please place your unit test Protocol Buffer definitions here.
+-- 
+1.7.9.5
+

@@ -1,0 +1,46 @@
+From e82dddfbc897de77171d80a931f4087f3a3bd379 Mon Sep 17 00:00:00 2001
+From: Ryan Blue <blue@apache.org>
+Date: Tue, 31 Mar 2015 16:49:30 -0700
+Subject: [PATCH 098/176] PARQUET-214: Fix Avro string regression.
+
+At some point, parquet-avro converted string fields to binary without
+the UTF8 annotation. The change in PARQUET-139 to filter the file's
+schema using the requested projection causes a regression because the
+annotation is not present in some file schemas, but is present in the
+projection schema converted from Avro.
+
+This reverts the projection change to avoid a regression in a release.
+Fixing the projection as in PARQUET-139 will need to be done as a
+follow-up.
+
+Author: Ryan Blue <blue@apache.org>
+
+Closes #142 from rdblue/PARQUET-214-fix-avro-regression and squashes the following commits:
+
+71e0207 [Ryan Blue] PARQUET-214: Add support for old avro.schema property.
+95148f9 [Ryan Blue] PARQUET-214: Revert Schema projection change from PARQUET-139.
+
+Conflicts:
+	parquet-avro/src/main/java/parquet/avro/AvroReadSupport.java
+Resolution:
+    AvroReadSupport: Removed comment not already removed by previous fix
+---
+ .../main/java/parquet/avro/AvroReadSupport.java    |    2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/parquet-avro/src/main/java/parquet/avro/AvroReadSupport.java b/parquet-avro/src/main/java/parquet/avro/AvroReadSupport.java
+index b23457c..9df3363 100644
+--- a/parquet-avro/src/main/java/parquet/avro/AvroReadSupport.java
++++ b/parquet-avro/src/main/java/parquet/avro/AvroReadSupport.java
+@@ -81,8 +81,6 @@ public class AvroReadSupport<T extends IndexedRecord> extends ReadSupport<T> {
+       metadata = new LinkedHashMap<String, String>();
+       metadata.put(AVRO_READ_SCHEMA_METADATA_KEY, avroReadSchema);
+     }
+-    // use getSchemaForRead because it checks that the requested schema is a
+-    // subset of the columns in the file schema
+     return new ReadContext(projection, metadata);
+   }
+ 
+-- 
+1.7.9.5
+

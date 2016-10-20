@@ -1,0 +1,73 @@
+From 6f125737544c24af36c6ff0b8c0397a2dba059b5 Mon Sep 17 00:00:00 2001
+From: Ryan Blue <blue@apache.org>
+Date: Wed, 1 Jul 2015 16:53:34 -0700
+Subject: [PATCH 146/176] PARQUET-308: Add ParquetWriter#getDataSize accessor.
+
+This returns the current file position plus the amount of data buffered
+in the current row group as an estimate of final data size.
+
+Author: Ryan Blue <blue@apache.org>
+
+Closes #212 from rdblue/PARQUET-308-add-data-size-accessor and squashes the following commits:
+
+1c0d798 [Ryan Blue] PARQUET-308: Add ParquetWriter#getDataSize accessor.
+---
+ .../hadoop/InternalParquetRecordWriter.java        |    9 +++++++++
+ .../main/java/parquet/hadoop/ParquetWriter.java    |    7 +++++++
+ 2 files changed, 16 insertions(+)
+
+diff --git a/parquet-hadoop/src/main/java/parquet/hadoop/InternalParquetRecordWriter.java b/parquet-hadoop/src/main/java/parquet/hadoop/InternalParquetRecordWriter.java
+index 2ca8254..a9d0ed0 100644
+--- a/parquet-hadoop/src/main/java/parquet/hadoop/InternalParquetRecordWriter.java
++++ b/parquet-hadoop/src/main/java/parquet/hadoop/InternalParquetRecordWriter.java
+@@ -57,6 +57,7 @@ class InternalParquetRecordWriter<T> {
+ 
+   private long recordCount = 0;
+   private long recordCountForNextMemCheck = MINIMUM_RECORD_COUNT_FOR_CHECK;
++  private long lastRowGroupEndPos = 0;
+ 
+   private ColumnWriteStore columnStore;
+   private ColumnChunkPageWriteStore pageStore;
+@@ -117,6 +118,13 @@ class InternalParquetRecordWriter<T> {
+     checkBlockSizeReached();
+   }
+ 
++  /**
++   * @return the total size of data written to the file and buffered in memory
++   */
++  public long getDataSize() {
++    return lastRowGroupEndPos + columnStore.getBufferedSize();
++  }
++
+   private void checkBlockSizeReached() throws IOException {
+     if (recordCount >= recordCountForNextMemCheck) { // checking the memory size is relatively expensive, so let's not do it for every record.
+       long memSize = columnStore.getBufferedSize();
+@@ -128,6 +136,7 @@ class InternalParquetRecordWriter<T> {
+         flushRowGroupToStore();
+         initStore();
+         recordCountForNextMemCheck = min(max(MINIMUM_RECORD_COUNT_FOR_CHECK, recordCount / 2), MAXIMUM_RECORD_COUNT_FOR_CHECK);
++        this.lastRowGroupEndPos = parquetFileWriter.getPos();
+       } else {
+         recordCountForNextMemCheck = min(
+             max(MINIMUM_RECORD_COUNT_FOR_CHECK, (recordCount + (long)(nextRowGroupSize / ((float)recordSize))) / 2), // will check halfway
+diff --git a/parquet-hadoop/src/main/java/parquet/hadoop/ParquetWriter.java b/parquet-hadoop/src/main/java/parquet/hadoop/ParquetWriter.java
+index 854f745..6c09c9b 100644
+--- a/parquet-hadoop/src/main/java/parquet/hadoop/ParquetWriter.java
++++ b/parquet-hadoop/src/main/java/parquet/hadoop/ParquetWriter.java
+@@ -337,6 +337,13 @@ public class ParquetWriter<T> implements Closeable {
+   }
+ 
+   /**
++   * @return the total size of data written to the file and buffered in memory
++   */
++  public long getDataSize() {
++    return writer.getDataSize();
++  }
++
++  /**
+    * An abstract builder class for ParquetWriter instances.
+    *
+    * Object models should extend this builder to provide writer configuration
+-- 
+1.7.9.5
+

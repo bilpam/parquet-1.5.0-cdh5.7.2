@@ -1,0 +1,309 @@
+From 3182b1d4fbd6bbb641a505ccf58792e2a2785882 Mon Sep 17 00:00:00 2001
+From: Ryan Blue <blue@apache.org>
+Date: Mon, 14 Sep 2015 16:18:43 -0700
+Subject: [PATCH 168/176] CLOUDERA-BUILD. Turn on binary compatibility checks.
+
+---
+ parquet-avro/pom.xml      |    4 ++
+ parquet-column/pom.xml    |    4 ++
+ parquet-common/pom.xml    |    4 ++
+ parquet-encoding/pom.xml  |    4 ++
+ parquet-generator/pom.xml |    4 ++
+ parquet-hadoop/pom.xml    |    6 ++-
+ parquet-pig/pom.xml       |    4 ++
+ parquet-protobuf/pom.xml  |    4 ++
+ parquet-thrift/pom.xml    |    4 ++
+ pom.xml                   |  112 ++++++++++++++++++++++++++++-----------------
+ 10 files changed, 107 insertions(+), 43 deletions(-)
+
+diff --git a/parquet-avro/pom.xml b/parquet-avro/pom.xml
+index 95cec7f..96a3074 100644
+--- a/parquet-avro/pom.xml
++++ b/parquet-avro/pom.xml
+@@ -100,6 +100,10 @@
+     </resources>
+     <plugins>
+       <plugin>
++        <groupId>com.github.siom79.japicmp</groupId>
++        <artifactId>japicmp-maven-plugin</artifactId>
++      </plugin>
++      <plugin>
+         <artifactId>maven-enforcer-plugin</artifactId>
+       </plugin>
+       <plugin>
+diff --git a/parquet-column/pom.xml b/parquet-column/pom.xml
+index f29c4c4..2a35572 100644
+--- a/parquet-column/pom.xml
++++ b/parquet-column/pom.xml
+@@ -82,6 +82,10 @@
+   <build>
+     <plugins>
+       <plugin>
++        <groupId>com.github.siom79.japicmp</groupId>
++        <artifactId>japicmp-maven-plugin</artifactId>
++      </plugin>
++      <plugin>
+         <artifactId>maven-enforcer-plugin</artifactId>
+       </plugin>
+       <plugin>
+diff --git a/parquet-common/pom.xml b/parquet-common/pom.xml
+index 30f1de3..ec9f1be 100644
+--- a/parquet-common/pom.xml
++++ b/parquet-common/pom.xml
+@@ -47,6 +47,10 @@
+   <build>
+     <plugins>
+       <plugin>
++        <groupId>com.github.siom79.japicmp</groupId>
++        <artifactId>japicmp-maven-plugin</artifactId>
++      </plugin>
++      <plugin>
+         <artifactId>maven-enforcer-plugin</artifactId>
+       </plugin>
+       <plugin>
+diff --git a/parquet-encoding/pom.xml b/parquet-encoding/pom.xml
+index 5aed7cc..5710954 100644
+--- a/parquet-encoding/pom.xml
++++ b/parquet-encoding/pom.xml
+@@ -52,6 +52,10 @@
+   <build>
+     <plugins>
+       <plugin>
++        <groupId>com.github.siom79.japicmp</groupId>
++        <artifactId>japicmp-maven-plugin</artifactId>
++      </plugin>
++      <plugin>
+         <artifactId>maven-enforcer-plugin</artifactId>
+       </plugin>
+       <plugin>
+diff --git a/parquet-generator/pom.xml b/parquet-generator/pom.xml
+index 4130368..4b876cd 100644
+--- a/parquet-generator/pom.xml
++++ b/parquet-generator/pom.xml
+@@ -47,6 +47,10 @@
+     </resources>
+     <plugins>
+       <plugin>
++        <groupId>com.github.siom79.japicmp</groupId>
++        <artifactId>japicmp-maven-plugin</artifactId>
++      </plugin>
++      <plugin>
+         <artifactId>maven-enforcer-plugin</artifactId>
+       </plugin>
+     </plugins>
+diff --git a/parquet-hadoop/pom.xml b/parquet-hadoop/pom.xml
+index f29d599..6d0291c 100644
+--- a/parquet-hadoop/pom.xml
++++ b/parquet-hadoop/pom.xml
+@@ -96,11 +96,13 @@
+ 
+   <build>
+     <plugins>
+-<!-- turned off temporarily, must be turned back on after 1.6.0 is released.
++      <plugin>
++        <groupId>com.github.siom79.japicmp</groupId>
++        <artifactId>japicmp-maven-plugin</artifactId>
++      </plugin>
+       <plugin>
+         <artifactId>maven-enforcer-plugin</artifactId>
+       </plugin>
+--->
+       <plugin>
+         <groupId>org.apache.maven.plugins</groupId>
+         <artifactId>maven-jar-plugin</artifactId>
+diff --git a/parquet-pig/pom.xml b/parquet-pig/pom.xml
+index 5807210..b564fca 100644
+--- a/parquet-pig/pom.xml
++++ b/parquet-pig/pom.xml
+@@ -114,6 +114,10 @@
+   <build>
+     <plugins>
+       <plugin>
++        <groupId>com.github.siom79.japicmp</groupId>
++        <artifactId>japicmp-maven-plugin</artifactId>
++      </plugin>
++      <plugin>
+         <groupId>org.apache.maven.plugins</groupId>
+         <artifactId>maven-jar-plugin</artifactId>
+       </plugin>
+diff --git a/parquet-protobuf/pom.xml b/parquet-protobuf/pom.xml
+index 11a69a2..01bc4ea 100644
+--- a/parquet-protobuf/pom.xml
++++ b/parquet-protobuf/pom.xml
+@@ -87,6 +87,10 @@
+   <build>
+     <plugins>
+       <plugin>
++        <groupId>com.github.siom79.japicmp</groupId>
++        <artifactId>japicmp-maven-plugin</artifactId>
++      </plugin>
++      <plugin>
+         <groupId>org.apache.maven.plugins</groupId>
+         <artifactId>maven-jar-plugin</artifactId>
+         <version>${maven-jar-plugin.version}</version>
+diff --git a/parquet-thrift/pom.xml b/parquet-thrift/pom.xml
+index 89bc136..4348718 100644
+--- a/parquet-thrift/pom.xml
++++ b/parquet-thrift/pom.xml
+@@ -133,6 +133,10 @@
+   <build>
+     <plugins>
+       <plugin>
++        <groupId>com.github.siom79.japicmp</groupId>
++        <artifactId>japicmp-maven-plugin</artifactId>
++      </plugin>
++      <plugin>
+         <artifactId>maven-enforcer-plugin</artifactId>
+       </plugin>
+       <plugin>
+diff --git a/pom.xml b/pom.xml
+index 1e8cec2..a259c2e 100644
+--- a/pom.xml
++++ b/pom.xml
+@@ -137,12 +137,12 @@
+     <jackson.groupId>org.codehaus.jackson</jackson.groupId>
+     <jackson.version>${cdh.jackson.version}</jackson.version>
+     <jackson.package>org.codehaus.jackson</jackson.package>
+-    <shade.prefix>parquet</shade.prefix>
++    <shade.prefix>shaded.parquet</shade.prefix>
+     <hadoop.version>${cdh.hadoop.version}</hadoop.version>
+     <cascading.version>2.5.3</cascading.version>
+     <parquet.format.version>${cdh.parquet-format.version}</parquet.format.version>
+     <log4j.version>1.2.17</log4j.version>
+-    <previous.version>1.5.0</previous.version>
++    <previous.version>1.5.0-cdh5.2.0</previous.version>
+     <thrift.executable>thrift</thrift.executable>
+     <protoc.executable>protoc</protoc.executable>
+     <pig.version>${cdh.pig.version}</pig.version>
+@@ -155,6 +155,7 @@
+     <scala.binary.version>2.10</scala.binary.version>
+     <fastutil.version>6.3</fastutil.version>
+     <semver.api.version>0.9.33</semver.api.version>
++    <compat.skip>false</compat.skip>
+   </properties>
+ 
+   <modules>
+@@ -265,45 +266,6 @@
+               <version>0.9.27</version>
+             </dependency>
+           </dependencies>
+-          <!--
+-         <executions>
+-           <execution>
+-             <id>check</id>
+-             <phase>verify</phase>
+-             <goals>
+-               <goal>enforce</goal>
+-             </goals>
+-             <configuration>
+-               <rules>
+-                 <requireBackwardCompatibility implementation="org.semver.enforcer.RequireSemanticVersioningConformance">
+-                   <dumpDetails>true</dumpDetails>
+-                   <previousVersion>${previous.version}</previousVersion>
+-                   <excludes>
+-                     <exclude>parquet/hadoop/thrift/**</exclude>
+-                     <exclude>parquet/thrift/projection/**</exclude>
+-                     <exclude>parquet/thrift/ThriftSchemaConverter</exclude>
+-                     <exclude>parquet/filter2/**</exclude>
+-                     <exclude>parquet/org/**</exclude>
+-                     <! one time exclusions that should be removed >
+-                     <exclude>parquet/io/api/Binary</exclude>
+-                     <exclude>parquet/column/values/**</exclude>
+-                     <exclude>parquet/column/**</exclude>
+-                     <exclude>parquet/hadoop/ParquetInputSplit</exclude>
+-                     <exclude>shaded/**</exclude> <!- shaded by parquet ->
+-                     <!- temporary exclusions for false-positives ->
+-                     <exclude>org/apache/parquet/Version</exclude>
+-                     <exclude>org/apache/parquet/schema/**</exclude> <!- methods moved to new superclass ->
+-                     <exclude>org/apache/parquet/thrift/ThriftSchemaConvertVisitor</exclude> <!- not public ->
+-                     <exclude>org/apache/parquet/avro/AvroParquetReader</exclude> <!- returns subclass of old return class ->
+-                     <exclude>org/apache/parquet/avro/SpecificDataSupplier</exclude> <!- made public ->
+-                     <exclude>org/apache/parquet/io/ColumnIOFactory$ColumnIOCreatorVisitor</exclude> <!- removed non-API class ->
+-                     <exclude>org/apache/parquet/io/ColumnIOFactory/**</exclude> <!- removed non-API class and methods->
+-                   </excludes>
+-                 </requireBackwardCompatibility>
+-               </rules>
+-             </configuration>
+-           </execution>
+-         </executions>-->
+           <configuration>
+             <rules>
+               <requireJavaVersion>
+@@ -336,6 +298,74 @@
+           </executions>
+         </plugin>
+         <plugin>
++          <groupId>com.github.siom79.japicmp</groupId>
++          <artifactId>japicmp-maven-plugin</artifactId>
++          <version>0.5.3</version>
++          <configuration>
++            <oldVersion>
++              <dependency>
++                <groupId>com.twitter</groupId>
++                <artifactId>${project.artifactId}</artifactId>
++                <version>${previous.version}</version>
++              </dependency>
++            </oldVersion>
++            <newVersion>
++              <file>
++                <path>${project.build.directory}/${project.artifactId}-${project.version}.jar</path>
++              </file>
++            </newVersion>
++            <parameter>
++              <onlyModified>true</onlyModified>
++              <includes>
++                <include>parquet</include>
++              </includes>
++              <excludes>
++                <exclude>parquet.column</exclude>
++                <exclude>parquet.filter2</exclude>
++                <exclude>parquet.hadoop.metadata.ColumnPath</exclude> <!-- moved to parquet-common -->
++                <exclude>parquet.hadoop.metadata.Canonicalizer</exclude> <!-- moved to parquet-common -->
++                <exclude>parquet.hadoop.ParquetInputSplit</exclude>
++                <exclude>parquet.hadoop.ParquetInputFormat#getReadSupport(org.apache.hadoop.conf.Configuration)</exclude> <!-- not public API -->
++                <exclude>parquet.io.api.Binary#Binary()</exclude>
++                <exclude>parquet.schema.Types\$PrimitiveBuilder</exclude> <!-- methods moved to superclass -->
++                <exclude>parquet.schema.Types\$GroupBuilder</exclude> <!-- methods moved to superclass -->
++                <exclude>parquet.io.ColumnIOFactory\$ColumnIOCreatorVisitor</exclude> <!-- not public API -->
++                <exclude>parquet.thrift.projection</exclude>
++                <exclude>parquet.thrift.ThriftSchemaConverter#toStructType(java.lang.Class)</exclude> <!-- not public API -->
++                <exclude>parquet.thrift.ThriftSchemaConvertVisitor</exclude> <!-- not public API -->
++                <exclude>parquet.it.unimi.dsi</exclude> <!-- shaded fastutil from old shading pattern -->
++                <exclude>parquet.${jackson.package}</exclude> <!-- shaded jackson from old shading pattern-->
++                <exclude>shaded</exclude> <!-- current shading pattern -->
++              </excludes>
++              <!-- <accessModifier>public</accessModifier> -->
++              <breakBuildOnModifications>false</breakBuildOnModifications>
++              <breakBuildOnBinaryIncompatibleModifications>true</breakBuildOnBinaryIncompatibleModifications>
++              <onlyBinaryIncompatible>true</onlyBinaryIncompatible>
++              <includeSynthetic>false</includeSynthetic>
++              <ignoreMissingClasses>false</ignoreMissingClasses>
++              <skipPomModules>true</skipPomModules>
++            </parameter>
++            <dependencies>
++              <!--
++              <dependency>
++                <groupId>org.apache.commons</groupId>
++                <artifactId>commons-math3</artifactId>
++                <version>3.4</version>
++              </dependency>
++              -->
++            </dependencies>
++            <skip>${compat.skip}</skip>
++          </configuration>
++          <executions>
++            <execution>
++              <phase>verify</phase>
++              <goals>
++                <goal>cmp</goal>
++              </goals>
++            </execution>
++          </executions>
++        </plugin>
++        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-release-plugin</artifactId>
+          <version>2.1</version>
+-- 
+1.7.9.5
+

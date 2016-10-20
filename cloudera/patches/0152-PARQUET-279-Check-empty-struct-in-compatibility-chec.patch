@@ -1,0 +1,458 @@
+From 9f5e5f71cdd0666dfe15dc86de3d23ef8cc81b3d Mon Sep 17 00:00:00 2001
+From: Tianshuo Deng <tdeng@twitter.com>
+Date: Mon, 13 Jul 2015 10:36:18 -0700
+Subject: [PATCH 152/176] PARQUET-279 : Check empty struct in compatibility
+ checker
+
+Add the empty struct check in the CompatibilityChecker util.
+Parquet currently does not support empty struct/group without leaves
+
+Author: Tianshuo Deng <tdeng@twitter.com>
+
+Closes #194 from tsdeng/check_empty_struct and squashes the following commits:
+
+35d77a1 [Tianshuo Deng] fix rebase
+d781cf3 [Tianshuo Deng] simplify constructor
+cd2fa8e [Tianshuo Deng] add State
+e75a6ac [Tianshuo Deng] use immutable FieldsPath
+2bff920 [Tianshuo Deng] fix test
+69b4b9c [Tianshuo Deng] minor fixes
+2db8c4b [Tianshuo Deng] remove unused println
+5107ce2 [Tianshuo Deng] fix comments
+265e228 [Tianshuo Deng] wip
+
+Conflicts:
+	parquet-thrift/src/main/java/parquet/thrift/struct/CompatibilityChecker.java
+	parquet-thrift/src/test/thrift/compat.thrift
+Resolution:
+    CompatibilityChecker: fixed import package names.
+    compat.thrift: conflict at EOF
+---
+ parquet-common/src/main/java/parquet/Strings.java  |   14 +-
+ .../java/parquet/thrift/ThriftSchemaConverter.java |    4 +-
+ .../thrift/struct/CompatibilityChecker.java        |  151 +++++++++++++-------
+ .../parquet/thrift/struct/CompatibilityRunner.java |    7 +
+ .../thrift/struct/CompatibilityCheckerTest.java    |   16 ++-
+ parquet-thrift/src/test/thrift/compat.thrift       |    8 ++
+ 6 files changed, 143 insertions(+), 57 deletions(-)
+
+diff --git a/parquet-common/src/main/java/parquet/Strings.java b/parquet-common/src/main/java/parquet/Strings.java
+index d76046f..23a09df 100644
+--- a/parquet-common/src/main/java/parquet/Strings.java
++++ b/parquet-common/src/main/java/parquet/Strings.java
+@@ -40,7 +40,19 @@ public final class Strings {
+    * @return a single joined string
+    */
+   public static String join(Iterable<String> s, String on) {
+-    Iterator<String> iter = s.iterator();
++    return join(s.iterator(), on);
++  }
++
++  /**
++   * Join an Iterator of Strings into a single string with a delimiter.
++   * For example, join(Arrays.asList("foo","","bar","x"), "|") would return
++   * "foo||bar|x"
++   *
++   * @param iter an iterator of strings
++   * @param on the delimiter
++   * @return a single joined string
++   */
++  public static String join(Iterator<String> iter, String on) {
+     StringBuilder sb = new StringBuilder();
+     while (iter.hasNext()) {
+       sb.append(iter.next());
+diff --git a/parquet-thrift/src/main/java/parquet/thrift/ThriftSchemaConverter.java b/parquet-thrift/src/main/java/parquet/thrift/ThriftSchemaConverter.java
+index 204c825..87afbba 100644
+--- a/parquet-thrift/src/main/java/parquet/thrift/ThriftSchemaConverter.java
++++ b/parquet-thrift/src/main/java/parquet/thrift/ThriftSchemaConverter.java
+@@ -159,11 +159,11 @@ public class ThriftSchemaConverter {
+         break;
+       case SET:
+         final Field setElemField = field.getSetElemField();
+-        type = new ThriftType.SetType(toThriftField(name, setElemField, requirement));
++        type = new ThriftType.SetType(toThriftField(setElemField.getName(), setElemField, requirement));
+         break;
+       case LIST:
+         final Field listElemField = field.getListElemField();
+-        type = new ThriftType.ListType(toThriftField(name, listElemField, requirement));
++        type = new ThriftType.ListType(toThriftField(listElemField.getName(), listElemField, requirement));
+         break;
+       case ENUM:
+         Collection<TEnum> enumValues = field.getEnumValues();
+diff --git a/parquet-thrift/src/main/java/parquet/thrift/struct/CompatibilityChecker.java b/parquet-thrift/src/main/java/parquet/thrift/struct/CompatibilityChecker.java
+index 0b081f1..e982574 100644
+--- a/parquet-thrift/src/main/java/parquet/thrift/struct/CompatibilityChecker.java
++++ b/parquet-thrift/src/main/java/parquet/thrift/struct/CompatibilityChecker.java
+@@ -1,4 +1,4 @@
+-/* 
++/*
+  * Licensed to the Apache Software Foundation (ASF) under one
+  * or more contributor license agreements.  See the NOTICE file
+  * distributed with this work for additional information
+@@ -19,9 +19,13 @@
+ package parquet.thrift.struct;
+ 
+ 
++import java.util.ArrayDeque;
+ import java.util.ArrayList;
++import java.util.Deque;
++import java.util.Iterator;
+ import java.util.List;
+ 
++import parquet.thrift.projection.FieldsPath;
+ import parquet.thrift.struct.ThriftType.BoolType;
+ import parquet.thrift.struct.ThriftType.ByteType;
+ import parquet.thrift.struct.ThriftType.DoubleType;
+@@ -30,9 +34,10 @@ import parquet.thrift.struct.ThriftType.I16Type;
+ import parquet.thrift.struct.ThriftType.I32Type;
+ import parquet.thrift.struct.ThriftType.I64Type;
+ import parquet.thrift.struct.ThriftType.StringType;
++import parquet.Strings;
+ 
+ /**
+- * A checker for thrift struct, returns compatibility report based on following rules:
++ * A checker for thrift struct to enforce its backward compatibility, returns compatibility report based on following rules:
+  * 1. Should not add new REQUIRED field in new thrift struct. Adding optional field is OK
+  * 2. Should not change field type for an existing field
+  * 3. Should not delete existing field
+@@ -43,8 +48,8 @@ import parquet.thrift.struct.ThriftType.StringType;
+ public class CompatibilityChecker {
+ 
+   public CompatibilityReport checkCompatibility(ThriftType.StructType oldStruct, ThriftType.StructType newStruct) {
+-    CompatibleCheckerVisitor visitor = new CompatibleCheckerVisitor(oldStruct);
+-    newStruct.accept(visitor);
++    CompatibleCheckerVisitor visitor = new CompatibleCheckerVisitor();
++    newStruct.accept(visitor, new State(oldStruct,new FieldsPath()));
+     return visitor.getReport();
+   }
+ 
+@@ -52,90 +57,120 @@ public class CompatibilityChecker {
+ 
+ class CompatibilityReport {
+   boolean isCompatible = true;
++  boolean hasEmptyStruct = false;
+   List<String> messages = new ArrayList<String>();
+ 
+   public boolean isCompatible() {
+     return isCompatible;
+   }
+ 
++  public boolean hasEmptyStruct() {
++    return hasEmptyStruct;
++  }
++
+   public void fail(String message) {
+     messages.add(message);
+     isCompatible = false;
+   }
+ 
++  public void emptyStruct(String message) {
++    messages.add(message);
++    hasEmptyStruct = true;
++  }
++
+   public List<String> getMessages() {
+     return messages;
+   }
++
++  public String prettyMessages() {
++
++    return Strings.join(messages, "\n");
++  }
++
++  @Override
++  public String toString() {
++    return "CompatibilityReport{" +
++        "isCompatible=" + isCompatible +
++        ", hasEmptyStruct=" + hasEmptyStruct +
++        ", messages=\n" + prettyMessages() +
++        '}';
++  }
+ }
+ 
+-class CompatibleCheckerVisitor implements ThriftType.TypeVisitor {
++class State {
++  FieldsPath path;
+   ThriftType oldType;
+-  CompatibilityReport report = new CompatibilityReport();
+ 
+-  CompatibleCheckerVisitor(ThriftType.StructType oldType) {
++  public State(ThriftType oldType, FieldsPath fieldsPath) {
++    this.path = fieldsPath;
+     this.oldType = oldType;
+   }
++}
++
++class CompatibleCheckerVisitor implements ThriftType.StateVisitor<Void, State> {
++
++  CompatibilityReport report = new CompatibilityReport();
+ 
+   public CompatibilityReport getReport() {
+     return report;
+   }
+ 
+   @Override
+-  public void visit(ThriftType.MapType mapType) {
+-    ThriftType.MapType currentOldType = ((ThriftType.MapType) oldType);
+-    ThriftField oldKeyField = currentOldType.getKey();
++  public Void visit(ThriftType.MapType mapType, State state) {
++    ThriftType.MapType oldMapType = ((ThriftType.MapType) state.oldType);
++    ThriftField oldKeyField = oldMapType.getKey();
+     ThriftField newKeyField = mapType.getKey();
+ 
+     ThriftField newValueField = mapType.getValue();
+-    ThriftField oldValueField = currentOldType.getValue();
++    ThriftField oldValueField = oldMapType.getValue();
++
+ 
+-    checkField(oldKeyField, newKeyField);
+-    checkField(oldValueField, newValueField);
++    checkField(oldKeyField, newKeyField, state.path);
++    checkField(oldValueField, newValueField, state.path);
+ 
+-    oldType = currentOldType;
++    return null;
+   }
+ 
+   @Override
+-  public void visit(ThriftType.SetType setType) {
+-    ThriftType.SetType currentOldType = ((ThriftType.SetType) oldType);
+-    ThriftField oldField = currentOldType.getValues();
++  public Void visit(ThriftType.SetType setType, State state) {
++    ThriftType.SetType oldSetType = ((ThriftType.SetType) state.oldType);
++    ThriftField oldField = oldSetType.getValues();
+     ThriftField newField = setType.getValues();
+-    checkField(oldField, newField);
+-    oldType = currentOldType;
++    checkField(oldField, newField, state.path);
++    return null;
+   }
+ 
+   @Override
+-  public void visit(ThriftType.ListType listType) {
+-    ThriftType.ListType currentOldType = ((ThriftType.ListType) oldType);
++  public Void visit(ThriftType.ListType listType, State state) {
++    ThriftType.ListType currentOldType = ((ThriftType.ListType) state.oldType);
+     ThriftField oldField = currentOldType.getValues();
+     ThriftField newField = listType.getValues();
+-    checkField(oldField, newField);
+-    oldType = currentOldType;
++    checkField(oldField, newField, state.path);
++    return null;
+   }
+ 
+-  public void fail(String message) {
+-    report.fail(message);
++  public void incompatible(String message, FieldsPath path) {
++    report.fail("at " + path + ":" +message);
+   }
+ 
+-  private void checkField(ThriftField oldField, ThriftField newField) {
++  private void checkField(ThriftField oldField, ThriftField newField, FieldsPath path) {
+ 
+     if (!newField.getType().getType().equals(oldField.getType().getType())) {
+-      fail("type is not compatible: " + oldField.getName() + " " + oldField.getType().getType() + " vs " + newField.getType().getType());
++      incompatible("type is not compatible: " + oldField.getType().getType() + " vs " + newField.getType().getType(), path);
+       return;
+     }
+ 
+     if (!newField.getName().equals(oldField.getName())) {
+-      fail("field names are different: " + oldField.getName() + " vs " + newField.getName());
++      incompatible("field names are different: " + oldField.getName() + " vs " + newField.getName(), path);
+       return;
+     }
+ 
+     if (firstIsMoreRestirctive(newField.getRequirement(), oldField.getRequirement())) {
+-      fail("new field is more restrictive: " + newField.getName());
++      incompatible("new field is more restrictive: " + newField.getName(), path);
+       return;
+     }
+ 
+-    oldType = oldField.getType();
+-    newField.getType().accept(this);
++    newField.getType().accept(this, new State(oldField.getType(),path.push(newField)));
+   }
+ 
+   private boolean firstIsMoreRestirctive(ThriftField.Requirement firstReq, ThriftField.Requirement secReq) {
+@@ -148,20 +183,25 @@ class CompatibleCheckerVisitor implements ThriftType.TypeVisitor {
+   }
+ 
+   @Override
+-  public void visit(ThriftType.StructType newStruct) {
+-    ThriftType.StructType currentOldType = ((ThriftType.StructType) oldType);
++  public Void visit(ThriftType.StructType newStruct, State state) {
++    ThriftType.StructType oldStructType = ((ThriftType.StructType) state.oldType);
+     short oldMaxId = 0;
+-    for (ThriftField oldField : currentOldType.getChildren()) {
++
++    if (newStruct.getChildren().isEmpty()) {
++      report.emptyStruct("encountered an empty struct: " + state.path);
++    }
++
++    for (ThriftField oldField : oldStructType.getChildren()) {
+       short fieldId = oldField.getFieldId();
+       if (fieldId > oldMaxId) {
+         oldMaxId = fieldId;
+       }
+       ThriftField newField = newStruct.getChildById(fieldId);
+       if (newField == null) {
+-        fail("can not find index in new Struct: " + fieldId +" in " + newStruct);
+-        return;
++        incompatible("can not find index in new Struct: " + fieldId + " in " + newStruct, state.path);
++        return null;
+       }
+-      checkField(oldField, newField);
++      checkField(oldField, newField, state.path);
+     }
+ 
+     //check for new added
+@@ -172,50 +212,57 @@ class CompatibleCheckerVisitor implements ThriftType.TypeVisitor {
+ 
+       short newFieldId = newField.getFieldId();
+       if (newFieldId > oldMaxId) {
+-        fail("new required field " + newField.getName() + " is added");
+-        return;
++        incompatible("new required field " + newField.getName() + " is added", state.path);
++        return null;
+       }
+-      if (newFieldId < oldMaxId && currentOldType.getChildById(newFieldId) == null) {
+-        fail("new required field " + newField.getName() + " is added");
+-        return;
++      if (newFieldId < oldMaxId && oldStructType.getChildById(newFieldId) == null) {
++        incompatible("new required field " + newField.getName() + " is added", state.path);
++        return null;
+       }
+ 
+     }
+ 
+-    //restore
+-    oldType = currentOldType;
++    return null;
+   }
+ 
+   @Override
+-  public void visit(EnumType enumType) {
++  public Void visit(EnumType enumType, State state) {
++    return null;
+   }
+ 
+   @Override
+-  public void visit(BoolType boolType) {
++  public Void visit(BoolType boolType, State state) {
++    return null;
+   }
+ 
+   @Override
+-  public void visit(ByteType byteType) {
++  public Void visit(ByteType byteType, State state) {
++    return null;
+   }
+ 
+   @Override
+-  public void visit(DoubleType doubleType) {
++  public Void visit(DoubleType doubleType, State state) {
++    return null;
+   }
+ 
+   @Override
+-  public void visit(I16Type i16Type) {
++  public Void visit(I16Type i16Type, State state) {
++    return null;
+   }
+ 
+   @Override
+-  public void visit(I32Type i32Type) {
++  public Void visit(I32Type i32Type, State state) {
++    return null;
+   }
+ 
+   @Override
+-  public void visit(I64Type i64Type) {
++  public Void visit(I64Type i64Type, State state) {
++    return null;
+   }
+ 
+   @Override
+-  public void visit(StringType stringType) {
++  public Void visit(StringType stringType, State state) {
++    return null;
+   }
+ }
+ 
+diff --git a/parquet-thrift/src/main/java/parquet/thrift/struct/CompatibilityRunner.java b/parquet-thrift/src/main/java/parquet/thrift/struct/CompatibilityRunner.java
+index 13dc876..22daacf 100644
+--- a/parquet-thrift/src/main/java/parquet/thrift/struct/CompatibilityRunner.java
++++ b/parquet-thrift/src/main/java/parquet/thrift/struct/CompatibilityRunner.java
+@@ -73,6 +73,13 @@ public class CompatibilityRunner {
+       System.err.println(report.getMessages());
+       System.exit(1);
+     }
++
++    if (report.hasEmptyStruct()) {
++      System.err.println("schema contains empty struct");
++      System.err.println(report.getMessages());
++      System.exit(1);
++    }
++
+     System.out.println("[success] schema is compatible");
+ 
+   }
+diff --git a/parquet-thrift/src/test/java/parquet/thrift/struct/CompatibilityCheckerTest.java b/parquet-thrift/src/test/java/parquet/thrift/struct/CompatibilityCheckerTest.java
+index f58cc74..12d913d 100644
+--- a/parquet-thrift/src/test/java/parquet/thrift/struct/CompatibilityCheckerTest.java
++++ b/parquet-thrift/src/test/java/parquet/thrift/struct/CompatibilityCheckerTest.java
+@@ -23,6 +23,7 @@ import parquet.thrift.ThriftSchemaConverter;
+ import parquet.thrift.test.compat.*;
+ 
+ import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertTrue;
+ 
+ public class CompatibilityCheckerTest {
+ 
+@@ -107,14 +108,25 @@ public class CompatibilityCheckerTest {
+     verifyCompatible(ListStructV1.class, ListStructV2.class, true);
+   }
+ 
++  @Test
++  public void testEmptyStruct() {
++    CompatibilityReport report = getCompatibilityReport(NestedEmptyStruct.class, NestedEmptyStruct.class);
++    assertEquals("encountered an empty struct: required_empty\nencountered an empty struct: optional_empty",report.prettyMessages());
++    assertTrue(report.hasEmptyStruct());
++  }
++
+   private ThriftType.StructType struct(Class thriftClass) {
+     return new ThriftSchemaConverter().toStructType(thriftClass);
+   }
+ 
+-  private void verifyCompatible(Class oldClass, Class newClass, boolean expectCompatible) {
++  private CompatibilityReport getCompatibilityReport(Class oldClass, Class newClass) {
+     CompatibilityChecker checker = new CompatibilityChecker();
+     CompatibilityReport report = checker.checkCompatibility(struct(oldClass), struct(newClass));
+-    System.out.println(report.messages);
++    return report;
++  }
++
++  private void verifyCompatible(Class oldClass, Class newClass, boolean expectCompatible) {
++    CompatibilityReport report = getCompatibilityReport(oldClass, newClass);
+     assertEquals(expectCompatible, report.isCompatible());
+   }
+ }
+diff --git a/parquet-thrift/src/test/thrift/compat.thrift b/parquet-thrift/src/test/thrift/compat.thrift
+index 55c456a..cef22ed 100644
+--- a/parquet-thrift/src/test/thrift/compat.thrift
++++ b/parquet-thrift/src/test/thrift/compat.thrift
+@@ -254,3 +254,11 @@ struct ListOfUnions {
+   2: required list<UnionOfStructs> reqListUnion
+ }
+ 
++struct EmptyStruct {
++
++}
++
++struct NestedEmptyStruct {
++  1: required EmptyStruct required_empty
++  2: optional EmptyStruct optional_empty
++}
+-- 
+1.7.9.5
+

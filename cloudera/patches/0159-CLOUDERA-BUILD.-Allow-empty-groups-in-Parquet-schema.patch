@@ -1,0 +1,52 @@
+From 28ec0dd133a5a27683b4989582cab074307bbe9d Mon Sep 17 00:00:00 2001
+From: Ryan Blue <blue@apache.org>
+Date: Wed, 19 Aug 2015 20:22:38 -0700
+Subject: [PATCH 159/176] CLOUDERA-BUILD. Allow empty groups in Parquet
+ schemas.
+
+This reverts part of PARQUET-278 to fix downstream SparkSQL, which uses
+empty groups.
+---
+ .../src/main/java/parquet/schema/GroupType.java    |    2 ++
+ .../test/java/parquet/schema/TestMessageType.java  |    2 ++
+ 2 files changed, 4 insertions(+)
+
+diff --git a/parquet-column/src/main/java/parquet/schema/GroupType.java b/parquet-column/src/main/java/parquet/schema/GroupType.java
+index dde41d0..6723043 100644
+--- a/parquet-column/src/main/java/parquet/schema/GroupType.java
++++ b/parquet-column/src/main/java/parquet/schema/GroupType.java
+@@ -88,9 +88,11 @@ public class GroupType extends Type {
+    */
+   GroupType(Repetition repetition, String name, OriginalType originalType, List<Type> fields, ID id) {
+     super(name, repetition, originalType, id);
++    /* Removed because this breaks SparkSQL
+     if (fields.isEmpty()) {
+       throw new InvalidSchemaException("A group type can not be empty. Parquet does not support empty group without leaves. Empty group: " + name);
+     }
++    */
+     this.fields = fields;
+     this.indexByName = new HashMap<String, Integer>();
+     for (int i = 0; i < fields.size(); i++) {
+diff --git a/parquet-column/src/test/java/parquet/schema/TestMessageType.java b/parquet-column/src/test/java/parquet/schema/TestMessageType.java
+index f602b85..1e8a071 100644
+--- a/parquet-column/src/test/java/parquet/schema/TestMessageType.java
++++ b/parquet-column/src/test/java/parquet/schema/TestMessageType.java
+@@ -26,6 +26,7 @@ import static parquet.schema.Type.Repetition.OPTIONAL;
+ import static parquet.schema.Type.Repetition.REPEATED;
+ import static parquet.schema.Type.Repetition.REQUIRED;
+ 
++import org.junit.Ignore;
+ import org.junit.Test;
+ 
+ import parquet.example.Paper;
+@@ -147,6 +148,7 @@ public class TestMessageType {
+   }
+ 
+   @Test
++  @Ignore
+   public void testEmptyGroup() {
+     try {
+       MessageType t5 = new MessageType("root1",
+-- 
+1.7.9.5
+

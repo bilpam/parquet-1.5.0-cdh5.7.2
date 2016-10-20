@@ -1,0 +1,162 @@
+From 6e3545636a1e806f8e6a5b84608564918c458805 Mon Sep 17 00:00:00 2001
+From: Ryan Blue <blue@apache.org>
+Date: Wed, 1 Jul 2015 17:30:29 -0700
+Subject: [PATCH 148/176] PARQUET-290: Add data model to Avro reader builder
+
+This PR currently includes #203, which will be removed when it is merged.
+
+Author: Ryan Blue <blue@apache.org>
+
+Closes #204 from rdblue/PARQUET-290-data-model-builder and squashes the following commits:
+
+d257a2c [Ryan Blue] PARQUET-290: Add Avro data model to reader builder.
+
+Conflicts:
+	parquet-avro/src/main/java/parquet/avro/AvroParquetReader.java
+	pom.xml
+Resolution:
+    Fixed package names.
+    pom.xml: conflict in semver config
+---
+ .../main/java/parquet/avro/AvroParquetReader.java  |   48 +++++++++++++++++++-
+ .../main/java/parquet/avro/AvroReadSupport.java    |   14 +++++-
+ .../java/parquet/avro/SpecificDataSupplier.java    |    2 +-
+ pom.xml                                            |    1 +
+ 4 files changed, 62 insertions(+), 3 deletions(-)
+
+diff --git a/parquet-avro/src/main/java/parquet/avro/AvroParquetReader.java b/parquet-avro/src/main/java/parquet/avro/AvroParquetReader.java
+index 5f7bf84..500bc34 100644
+--- a/parquet-avro/src/main/java/parquet/avro/AvroParquetReader.java
++++ b/parquet-avro/src/main/java/parquet/avro/AvroParquetReader.java
+@@ -20,11 +20,14 @@ package parquet.avro;
+ 
+ import java.io.IOException;
+ 
++import org.apache.avro.generic.GenericData;
++import org.apache.avro.specific.SpecificData;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.Path;
+ 
+ import parquet.filter.UnboundRecordFilter;
+ import parquet.hadoop.ParquetReader;
++import parquet.hadoop.api.ReadSupport;
+ 
+ /**
+  * Read Avro records from a Parquet file.
+@@ -32,7 +35,7 @@ import parquet.hadoop.ParquetReader;
+ public class AvroParquetReader<T> extends ParquetReader<T> {
+ 
+   public static <T> Builder<T> builder(Path file) {
+-    return ParquetReader.builder(new AvroReadSupport<T>(), file);
++    return new Builder<T>(file);
+   }
+ 
+   /**
+@@ -66,4 +69,47 @@ public class AvroParquetReader<T> extends ParquetReader<T> {
+   public AvroParquetReader(Configuration conf, Path file, UnboundRecordFilter unboundRecordFilter) throws IOException {
+     super(conf, file, new AvroReadSupport<T>(), unboundRecordFilter);
+   }
++
++  public static class Builder<T> extends ParquetReader.Builder {
++
++    private GenericData model = null;
++    private boolean enableCompatibility = true;
++    private boolean isReflect = true;
++
++    private Builder(Path path) {
++      super(path);
++    }
++
++    public Builder<T> withDataModel(GenericData model) {
++      this.model = model;
++
++      // only generic and specific are supported by AvroIndexedRecordConverter
++      if (model.getClass() != GenericData.class &&
++          model.getClass() != SpecificData.class) {
++        isReflect = true;
++      }
++
++      return this;
++    }
++
++    public Builder<T> disableCompatibility() {
++      this.enableCompatibility = false;
++      return this;
++    }
++
++    public Builder<T> withCompatibility(boolean enableCompatibility) {
++      this.enableCompatibility = enableCompatibility;
++      return this;
++    }
++
++    @Override
++    protected ReadSupport<T> getReadSupport() {
++      if (isReflect) {
++        conf.setBoolean(AvroReadSupport.AVRO_COMPATIBILITY, false);
++      } else {
++        conf.setBoolean(AvroReadSupport.AVRO_COMPATIBILITY, enableCompatibility);
++      }
++      return new AvroReadSupport<T>(model);
++    }
++  }
+ }
+diff --git a/parquet-avro/src/main/java/parquet/avro/AvroReadSupport.java b/parquet-avro/src/main/java/parquet/avro/AvroReadSupport.java
+index 3d9a5ab..0e90d49 100644
+--- a/parquet-avro/src/main/java/parquet/avro/AvroReadSupport.java
++++ b/parquet-avro/src/main/java/parquet/avro/AvroReadSupport.java
+@@ -67,6 +67,15 @@ public class AvroReadSupport<T> extends ReadSupport<T> {
+     configuration.set(AVRO_DATA_SUPPLIER, clazz.getName());
+   }
+ 
++  private GenericData model = null;
++
++  public AvroReadSupport() {
++  }
++
++  public AvroReadSupport(GenericData model) {
++    this.model = model;
++  }
++
+   @Override
+   public ReadContext init(Configuration configuration,
+                           Map<String, String> keyValueMetaData,
+@@ -129,7 +138,10 @@ public class AvroReadSupport<T> extends ReadSupport<T> {
+         parquetSchema, avroSchema, model);
+   }
+ 
+-  private static GenericData getDataModel(Configuration conf) {
++  private GenericData getDataModel(Configuration conf) {
++    if (model != null) {
++      return model;
++    }
+     Class<? extends AvroDataSupplier> suppClass = conf.getClass(
+         AVRO_DATA_SUPPLIER, SpecificDataSupplier.class, AvroDataSupplier.class);
+     return ReflectionUtils.newInstance(suppClass, conf).get();
+diff --git a/parquet-avro/src/main/java/parquet/avro/SpecificDataSupplier.java b/parquet-avro/src/main/java/parquet/avro/SpecificDataSupplier.java
+index 12b6b1d..c09d089 100644
+--- a/parquet-avro/src/main/java/parquet/avro/SpecificDataSupplier.java
++++ b/parquet-avro/src/main/java/parquet/avro/SpecificDataSupplier.java
+@@ -21,7 +21,7 @@ package parquet.avro;
+ import org.apache.avro.generic.GenericData;
+ import org.apache.avro.specific.SpecificData;
+ 
+-class SpecificDataSupplier implements AvroDataSupplier {
++public class SpecificDataSupplier implements AvroDataSupplier {
+   @Override
+   public GenericData get() {
+     return SpecificData.get();
+diff --git a/pom.xml b/pom.xml
+index 5350bcc..d65920f 100644
+--- a/pom.xml
++++ b/pom.xml
+@@ -296,6 +296,7 @@
+                      <exclude>org/apache/parquet/avro/SpecificDataSupplier</exclude> <!- made public ->
+                      <exclude>org/apache/parquet/io/ColumnIOFactory$ColumnIOCreatorVisitor</exclude> <!- removed non-API class ->
+                      <exclude>org/apache/parquet/io/ColumnIOFactory/**</exclude> <!- removed non-API class and methods->
++                     <exclude>org/apache/parquet/avro/AvroParquetReader</exclude> <!- returns subclass of old return class ->
+                    </excludes>
+                  </requireBackwardCompatibility>
+                </rules>
+-- 
+1.7.9.5
+

@@ -1,0 +1,143 @@
+From 77b637438582e6dbda20e3dcceba151ed094e089 Mon Sep 17 00:00:00 2001
+From: asingh <asingh@cloudera.com>
+Date: Sat, 11 Jul 2015 16:26:51 -0700
+Subject: [PATCH 151/176] PARQUET-329: Restore
+ ThriftReadSupport#THRIFT_COLUMN_FILTER_KEY
+
+ThriftReadSupport#THRIFT_COLUMN_FILTER_KEY was removed (incompatible change)
+
+Author: asingh <asingh@cloudera.com>
+
+Closes #239 from SinghAsDev/PARQUET-329 and squashes the following commits:
+
+1e44a70 [asingh] Remove o.a.p.hadoop.thrift from semver excludes
+4a1e572 [asingh] PARQUET-329: Restore ThriftReadSupport#THRIFT_COLUMN_FILTER_KEY
+
+Conflicts:
+	pom.xml
+Resolution:
+    pom.xml conflict in semver config (not used)
+---
+ .../parquet/hadoop/thrift/ThriftReadSupport.java   |   14 +++++++-------
+ .../DeprecatedFieldProjectionFilter.java           |    2 +-
+ .../projection/deprecated/PathGlobPattern.java     |    2 +-
+ .../TestParquetToThriftReadWriteAndProjection.java |    2 +-
+ pom.xml                                            |    1 -
+ 5 files changed, 10 insertions(+), 11 deletions(-)
+
+diff --git a/parquet-thrift/src/main/java/parquet/hadoop/thrift/ThriftReadSupport.java b/parquet-thrift/src/main/java/parquet/hadoop/thrift/ThriftReadSupport.java
+index 43bbc58..8a14fdf 100644
+--- a/parquet-thrift/src/main/java/parquet/hadoop/thrift/ThriftReadSupport.java
++++ b/parquet-thrift/src/main/java/parquet/hadoop/thrift/ThriftReadSupport.java
+@@ -53,7 +53,7 @@ public class ThriftReadSupport<T> extends ReadSupport<T> {
+    * Accepts a ";" delimited list of globs in the syntax implemented by {@link DeprecatedFieldProjectionFilter}
+    */
+   @Deprecated
+-  public static final String DEPRECATED_THRIFT_COLUMN_FILTER_KEY = "parquet.thrift.column.filter";
++  public static final String THRIFT_COLUMN_FILTER_KEY = "parquet.thrift.column.filter";
+ 
+   /**
+    * Accepts a ";" delimited list of glob paths, in the syntax implemented by {@link StrictFieldProjectionFilter}
+@@ -100,7 +100,7 @@ public class ThriftReadSupport<T> extends ReadSupport<T> {
+ 
+   @Deprecated
+   public static void setProjectionPushdown(JobConf jobConf, String projectionString) {
+-    jobConf.set(DEPRECATED_THRIFT_COLUMN_FILTER_KEY, projectionString);
++    jobConf.set(THRIFT_COLUMN_FILTER_KEY, projectionString);
+   }
+ 
+   public static void setStrictFieldProjectionFilter(Configuration conf, String semicolonDelimitedGlobs) {
+@@ -108,7 +108,7 @@ public class ThriftReadSupport<T> extends ReadSupport<T> {
+   }
+ 
+   public static FieldProjectionFilter getFieldProjectionFilter(Configuration conf) {
+-    String deprecated = conf.get(DEPRECATED_THRIFT_COLUMN_FILTER_KEY);
++    String deprecated = conf.get(THRIFT_COLUMN_FILTER_KEY);
+     String strict = conf.get(STRICT_THRIFT_COLUMN_FILTER_KEY);
+ 
+     if (Strings.isNullOrEmpty(deprecated) && Strings.isNullOrEmpty(strict)) {
+@@ -118,18 +118,18 @@ public class ThriftReadSupport<T> extends ReadSupport<T> {
+     if(!Strings.isNullOrEmpty(deprecated) && !Strings.isNullOrEmpty(strict)) {
+       throw new ThriftProjectionException(
+           "You cannot provide both "
+-              + DEPRECATED_THRIFT_COLUMN_FILTER_KEY
++              + THRIFT_COLUMN_FILTER_KEY
+               + " and "
+               + STRICT_THRIFT_COLUMN_FILTER_KEY
+               +"! "
+-              + DEPRECATED_THRIFT_COLUMN_FILTER_KEY
++              + THRIFT_COLUMN_FILTER_KEY
+               + " is deprecated."
+       );
+     }
+ 
+     if (!Strings.isNullOrEmpty(deprecated)) {
+       LOG.warn(String.format("Using %s is deprecated. Please see the docs for %s!",
+-          DEPRECATED_THRIFT_COLUMN_FILTER_KEY, STRICT_THRIFT_COLUMN_FILTER_KEY));
++          THRIFT_COLUMN_FILTER_KEY, STRICT_THRIFT_COLUMN_FILTER_KEY));
+       return new DeprecatedFieldProjectionFilter(deprecated);
+     }
+ 
+@@ -163,7 +163,7 @@ public class ThriftReadSupport<T> extends ReadSupport<T> {
+       throw new ThriftProjectionException(
+           String.format("You cannot provide both a partial schema and field projection filter."
+                   + "Only one of (%s, %s, %s) should be set.",
+-              PARQUET_READ_SCHEMA, STRICT_THRIFT_COLUMN_FILTER_KEY, DEPRECATED_THRIFT_COLUMN_FILTER_KEY));
++              PARQUET_READ_SCHEMA, STRICT_THRIFT_COLUMN_FILTER_KEY, THRIFT_COLUMN_FILTER_KEY));
+     }
+ 
+     //set requestedProjections only when it's specified
+diff --git a/parquet-thrift/src/main/java/parquet/thrift/projection/deprecated/DeprecatedFieldProjectionFilter.java b/parquet-thrift/src/main/java/parquet/thrift/projection/deprecated/DeprecatedFieldProjectionFilter.java
+index 4e525f1..18496cd 100644
+--- a/parquet-thrift/src/main/java/parquet/thrift/projection/deprecated/DeprecatedFieldProjectionFilter.java
++++ b/parquet-thrift/src/main/java/parquet/thrift/projection/deprecated/DeprecatedFieldProjectionFilter.java
+@@ -28,7 +28,7 @@ import parquet.thrift.projection.ThriftProjectionException;
+ 
+ /**
+  * Filter thrift attributes using glob syntax.
+- * This is used for parsing values assigned to ThriftReadSupport.DEPRECATED_THRIFT_COLUMN_FILTER_KEY
++ * This is used for parsing values assigned to ThriftReadSupport.THRIFT_COLUMN_FILTER_KEY
+  * @author Tianshuo Deng
+  */
+ @Deprecated
+diff --git a/parquet-thrift/src/main/java/parquet/thrift/projection/deprecated/PathGlobPattern.java b/parquet-thrift/src/main/java/parquet/thrift/projection/deprecated/PathGlobPattern.java
+index c13d469..3ae3bdf 100644
+--- a/parquet-thrift/src/main/java/parquet/thrift/projection/deprecated/PathGlobPattern.java
++++ b/parquet-thrift/src/main/java/parquet/thrift/projection/deprecated/PathGlobPattern.java
+@@ -27,7 +27,7 @@ import java.util.regex.PatternSyntaxException;
+  * Enhanced version of GlobPattern class that is defined in hadoop with extra capability of matching
+  * full path separated by '/', and double star matching
+  *
+- * This is used for parsing values assigned to ThriftReadSupport.DEPRECATED_THRIFT_COLUMN_FILTER_KEY
++ * This is used for parsing values assigned to ThriftReadSupport.THRIFT_COLUMN_FILTER_KEY
+  *
+  * @author Tianshuo Deng
+  */
+diff --git a/parquet-thrift/src/test/java/parquet/hadoop/thrift/TestParquetToThriftReadWriteAndProjection.java b/parquet-thrift/src/test/java/parquet/hadoop/thrift/TestParquetToThriftReadWriteAndProjection.java
+index e5abcfb..cccc836 100644
+--- a/parquet-thrift/src/test/java/parquet/hadoop/thrift/TestParquetToThriftReadWriteAndProjection.java
++++ b/parquet-thrift/src/test/java/parquet/hadoop/thrift/TestParquetToThriftReadWriteAndProjection.java
+@@ -329,7 +329,7 @@ public class TestParquetToThriftReadWriteAndProjection {
+ 
+   private void shouldDoProjectionWithThriftColumnFilter(String filterDesc,TBase toWrite, TBase toRead,Class<? extends TBase<?,?>> thriftClass) throws Exception {
+     Configuration conf = new Configuration();
+-    conf.set(ThriftReadSupport.DEPRECATED_THRIFT_COLUMN_FILTER_KEY, filterDesc);
++    conf.set(ThriftReadSupport.THRIFT_COLUMN_FILTER_KEY, filterDesc);
+     shouldDoProjection(conf, toWrite, toRead, thriftClass);
+   }
+ 
+diff --git a/pom.xml b/pom.xml
+index d65920f..5350bcc 100644
+--- a/pom.xml
++++ b/pom.xml
+@@ -296,7 +296,6 @@
+                      <exclude>org/apache/parquet/avro/SpecificDataSupplier</exclude> <!- made public ->
+                      <exclude>org/apache/parquet/io/ColumnIOFactory$ColumnIOCreatorVisitor</exclude> <!- removed non-API class ->
+                      <exclude>org/apache/parquet/io/ColumnIOFactory/**</exclude> <!- removed non-API class and methods->
+-                     <exclude>org/apache/parquet/avro/AvroParquetReader</exclude> <!- returns subclass of old return class ->
+                    </excludes>
+                  </requireBackwardCompatibility>
+                </rules>
+-- 
+1.7.9.5
+

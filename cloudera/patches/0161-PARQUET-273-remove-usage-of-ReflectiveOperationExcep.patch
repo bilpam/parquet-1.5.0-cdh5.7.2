@@ -1,0 +1,73 @@
+From be1cbce42b7ee1ed5f55ee6fe47ea9630a0818be Mon Sep 17 00:00:00 2001
+From: Tianshuo Deng <tdeng@twitter.com>
+Date: Tue, 12 May 2015 11:15:40 -0700
+Subject: [PATCH 161/176] PARQUET-273 : remove usage of
+ ReflectiveOperationException to support JAVA6
+
+as commented here: https://github.com/apache/parquet-mr/commit/52f3240d90f2397cd1850ab11674ba08a0ecb2a0#commitcomment-11065301
+
+Author: Tianshuo Deng <tdeng@twitter.com>
+
+Closes #191 from tsdeng/remove_usage_of_reflective_operation_exception and squashes the following commits:
+
+adbe37a [Tianshuo Deng] remove usage of ReflectiveOperationException to support JAVA6
+---
+ .../parquet/scrooge/ScroogeStructConverter.java    |   26 ++++++++++++++++----
+ 1 file changed, 21 insertions(+), 5 deletions(-)
+
+diff --git a/parquet-scrooge/src/main/java/parquet/scrooge/ScroogeStructConverter.java b/parquet-scrooge/src/main/java/parquet/scrooge/ScroogeStructConverter.java
+index 2c3b761..64c520a 100644
+--- a/parquet-scrooge/src/main/java/parquet/scrooge/ScroogeStructConverter.java
++++ b/parquet-scrooge/src/main/java/parquet/scrooge/ScroogeStructConverter.java
+@@ -91,7 +91,9 @@ public class ScroogeStructConverter {
+     ThriftStructCodec<?> companionObject;
+     try {
+       companionObject = (ThriftStructCodec<?>) companionClass.getField("MODULE$").get(null);
+-    } catch (ReflectiveOperationException e) {
++    } catch (NoSuchFieldException e) {
++      throw new ScroogeSchemaConversionException("Can not get ThriftStructCodec from companion object of " + companionClass.getName(), e);
++    } catch (IllegalAccessException e) {
+       throw new ScroogeSchemaConversionException("Can not get ThriftStructCodec from companion object of " + companionClass.getName(), e);
+     }
+ 
+@@ -141,8 +143,14 @@ public class ScroogeStructConverter {
+           Object companionUnionObj = companionUnionClass.getField("MODULE$").get(null);
+           ThriftStructFieldInfo info = (ThriftStructFieldInfo) companionUnionClass.getMethod("fieldInfo").invoke(companionUnionObj);
+           fields.add(info);
+-        } catch (ReflectiveOperationException e) {
+-          throw new ScroogeSchemaConversionException("can not find fiedInfo for " + unionClass, e);
++        } catch (NoSuchFieldException e) {
++          throw new ScroogeSchemaConversionException("can not find fieldInfo for " + unionClass, e);
++        } catch (InvocationTargetException e) {
++          throw new ScroogeSchemaConversionException("can not find fieldInfo for " + unionClass, e);
++        } catch (NoSuchMethodException e) {
++          throw new ScroogeSchemaConversionException("can not find fieldInfo for " + unionClass, e);
++        } catch (IllegalAccessException e) {
++          throw new ScroogeSchemaConversionException("can not find fieldInfo for " + unionClass, e);
+         }
+       }
+     }
+@@ -324,10 +332,18 @@ public class ScroogeStructConverter {
+         enumValues.add(new ThriftType.EnumValue(enumDesc.id, enumDesc.originalName));
+       }
+       return new ThriftType.EnumType(enumValues);
+-    } catch (ReflectiveOperationException e) {
+-      throw new ScroogeSchemaConversionException("Can not convert enum field " + fieldName, e);
+     } catch (RuntimeException e) {
+       throw new ScroogeSchemaConversionException("Can not convert enum field " + fieldName, e);
++    } catch (NoSuchMethodException e) {
++      throw new ScroogeSchemaConversionException("Can not convert enum field " + fieldName, e);
++    } catch (IllegalAccessException e) {
++      throw new ScroogeSchemaConversionException("Can not convert enum field " + fieldName, e);
++    } catch (NoSuchFieldException e) {
++      throw new ScroogeSchemaConversionException("Can not convert enum field " + fieldName, e);
++    } catch (InvocationTargetException e) {
++      throw new ScroogeSchemaConversionException("Can not convert enum field " + fieldName, e);
++    } catch (ClassNotFoundException e) {
++      throw new ScroogeSchemaConversionException("Can not convert enum field " + fieldName, e);
+     }
+ 
+   }
+-- 
+1.7.9.5
+

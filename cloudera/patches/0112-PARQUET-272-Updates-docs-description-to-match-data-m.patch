@@ -1,0 +1,40 @@
+From 04ca228a0c4ca90a3b07744cbd6317a6b1eae3a3 Mon Sep 17 00:00:00 2001
+From: Ben Pence <bpence@twitter.com>
+Date: Wed, 6 May 2015 16:34:24 -0700
+Subject: [PATCH 112/176] PARQUET-272: Updates docs description to match data
+ model
+
+Author: Ben Pence <bpence@twitter.com>
+
+Closes #190 from benpence/doc_fixes and squashes the following commits:
+
+0d5da56 [Ben Pence] Updates docs description to match data model
+---
+ parquet_cascading.md |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/parquet_cascading.md b/parquet_cascading.md
+index 9ea4837..656064a 100644
+--- a/parquet_cascading.md
++++ b/parquet_cascading.md
+@@ -110,7 +110,7 @@ For example, imagine a Person struct defined as:
+     }
+ 
+ A column is specified as the path from the root of the schema down to the field of interest, separated by `.`, just as you would access the field
+-in java or scala code. For example: `primaryAddress.phone.doNotCall`. 
++in java or scala code. For example: `primaryAddress.primaryPhone.doNotCall`.
+ This applies for repeated fields as well, for example `primaryAddress.otherPhones.number` selects all the `number`s from all the elements of `otherPhones`.
+ Maps are a special case -- the map is split into two columns, the key and the value. All the columns in the key are required, but you can select a subset of the
+ columns in the value (or skip the value entirely), for example: `otherAddresses.{key,value.street}` will select only the streets from the
+@@ -118,7 +118,7 @@ values of the map, but the entire key will be kept. To select an entire map, you
+ and to select only the keys: `otherAddresses.key`. When selecting a field that is a struct, for example `primaryAddress.primaryPhone`, 
+ it will select the entire struct. So `primaryAddress.primaryPhone.*` is redundant.
+ 
+-Columns can be specified concretely (like `primaryAddress.phone.doNotCall`), or a restricted glob syntax can be used.
++Columns can be specified concretely (like `primaryAddress.primaryPhone.doNotCall`), or a restricted glob syntax can be used.
+ The glob syntax supports only wildcards (`*`) and glob expressions (`{}`).
+ 
+ For example:
+-- 
+1.7.9.5
+

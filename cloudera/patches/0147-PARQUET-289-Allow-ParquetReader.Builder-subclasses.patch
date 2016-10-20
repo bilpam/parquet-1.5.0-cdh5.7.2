@@ -1,0 +1,79 @@
+From 42b942d63a87c3a87574be9e00818a296c38d750 Mon Sep 17 00:00:00 2001
+From: Ryan Blue <blue@apache.org>
+Date: Wed, 1 Jul 2015 17:18:41 -0700
+Subject: [PATCH 147/176] PARQUET-289: Allow ParquetReader.Builder subclasses.
+
+This adds a protected constructor for subclasses, a getReadSupport
+method for subclasses to override, and exposes the configuration for
+subclasses to modify inside of getReadSupport.
+
+Author: Ryan Blue <blue@apache.org>
+
+Closes #203 from rdblue/PARQUET-289-extend-reader-builder and squashes the following commits:
+
+692f159 [Ryan Blue] PARQUET-289: Allow ParquetReader.Builder subclasses.
+
+Conflicts:
+	parquet-hadoop/src/main/java/parquet/hadoop/ParquetReader.java
+Resolution:
+    Fixed package names.
+---
+ .../main/java/parquet/hadoop/ParquetReader.java    |   19 +++++++++++++++++--
+ 1 file changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/parquet-hadoop/src/main/java/parquet/hadoop/ParquetReader.java b/parquet-hadoop/src/main/java/parquet/hadoop/ParquetReader.java
+index 618b143..a6a740f 100644
+--- a/parquet-hadoop/src/main/java/parquet/hadoop/ParquetReader.java
++++ b/parquet-hadoop/src/main/java/parquet/hadoop/ParquetReader.java
+@@ -31,6 +31,7 @@ import org.apache.hadoop.fs.FileStatus;
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.Path;
+ 
++import parquet.Preconditions;
+ import parquet.filter.UnboundRecordFilter;
+ import parquet.filter2.compat.FilterCompat;
+ import parquet.filter2.compat.FilterCompat.Filter;
+@@ -168,8 +169,8 @@ public class ParquetReader<T> implements Closeable {
+   public static class Builder<T> {
+     private final ReadSupport<T> readSupport;
+     private final Path file;
+-    private Configuration conf;
+     private Filter filter;
++    protected Configuration conf;
+ 
+     private Builder(ReadSupport<T> readSupport, Path path) {
+       this.readSupport = checkNotNull(readSupport, "readSupport");
+@@ -178,6 +179,13 @@ public class ParquetReader<T> implements Closeable {
+       this.filter = FilterCompat.NOOP;
+     }
+ 
++    protected Builder(Path path) {
++      this.readSupport = null;
++      this.file = checkNotNull(path, "path");
++      this.conf = new Configuration();
++      this.filter = FilterCompat.NOOP;
++    }
++
+     public Builder<T> withConf(Configuration conf) {
+       this.conf = checkNotNull(conf, "conf");
+       return this;
+@@ -188,8 +196,15 @@ public class ParquetReader<T> implements Closeable {
+       return this;
+     }
+ 
++    protected ReadSupport<T> getReadSupport() {
++      // if readSupport is null, the protected constructor must have been used
++      Preconditions.checkArgument(readSupport != null,
++          "[BUG] Classes that extend Builder should override getReadSupport()");
++      return readSupport;
++    }
++
+     public ParquetReader<T> build() throws IOException {
+-      return new ParquetReader<T>(conf, file, readSupport, filter);
++      return new ParquetReader<T>(conf, file, getReadSupport(), filter);
+     }
+   }
+ }
+-- 
+1.7.9.5
+
